@@ -98,6 +98,7 @@ def main():
             if last_info < last_round:
                 new_info = get_info(last_info+1, last_round)
                 all_info = np.concatenate((all_info, new_info))
+                np.savetxt(history_path, all_info, delimiter=',', fmt="%d")
             else:
                 print("Error: saved info is something wrong.")
                 exit()
