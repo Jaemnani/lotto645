@@ -1,0 +1,9 @@
+bs4
+requests
+lxml
+torch
+torchvision
+torchaudio
+selenium
+pandas
+numpy==1.26.4
