@@ -1,0 +1,13 @@
+https://cafe.naver.com/dhlottery?iframe_url_utf8=%2FArticleRead.nhn%253Fclubid%3D29572332%2526page%3D1%2526menuid%3D22%2526boardtype%3DL%2526articleid%3D17487%2526referrerAllArticles%3Dfalse
+https://cafe.naver.com/dhlottery?iframe_url=/ArticleList.nhn%3Fsearch.clubid=29572332%26search.menuid=22%26search.boardtype=L%26search.totalCount=151%26search.cafeId=29572332%26search.page=11
+리허설 추첨
+https://cafe.naver.com/dhlottery?iframe_url=/ArticleList.nhn%3Fsearch.clubid=29572332%26search.menuid=22%26search.boardtype=L
+리허설 추첨, 페이지 선택
+페이지 번호 선택
+https://cafe.naver.com/dhlottery?iframe_url=/ArticleList.nhn%3Fsearch.clubid=29572332%26search.menuid=22%26search.boardtype=L%26search.totalCount=151%26search.cafeId=29572332%26search.page=
+https://cafe.naver.com/dhlottery?iframe_url=/ArticleList.nhn%3Fsearch.clubid=29572332%26search.menuid=22%26search.boardtype=L%26search.totalCount=151%26search.cafeId=29572332%26search.page=1
+https://cafe.naver.com/dhlottery?iframe_url=/ArticleList.nhn%3Fsearch.clubid=29572332%26search.menuid=22%26search.boardtype=L%26search.totalCount=151%26search.cafeId=29572332%26search.page=2
+페이지가 오버되면 리스트가 하나도 없음. -> "등록된 게시글이 없습니다." 로 확인할 수 있을 듯 하다.
+리허설 추첨, 게시물 선택
+https://cafe.naver.com/dhlottery?iframe_url_utf8=%2FArticleRead.nhn%253Fclubid%3D29572332%2526page%3D1%2526menuid%3D22%2526boardtype%3DL%2526articleid%3D17554%2526referrerAllArticles%3Dfalse
+https://cafe.naver.com/dhlottery?iframe_url_utf8=%2FArticleRead.nhn%253Fclubid%3D29572332%2526page%3D1%2526menuid%3D22%2526boardtype%3DL%2526articleid%3D     %2526referrerAllArticles%3Dfalse
