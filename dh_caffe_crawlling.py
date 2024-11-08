@@ -99,7 +99,7 @@ for name_tag, tap in text_list[::-1]:
     if len(history[history_numbers == int(tap)]) == 2:
         for i in history[history_numbers == int(tap)]:
             result_history.append(i)
-        continuel
+        continue
     
     tap_url = "https://cafe.naver.com/dhlottery?iframe_url_utf8=%2FArticleRead.nhn%253Fclubid%3D29572332%2526page%3D1%2526menuid%3D22%2526boardtype%3DL%2526articleid%3D"+name_tag+"%2526referrerAllArticles%3Dfalse"
     driver.get(tap_url)
