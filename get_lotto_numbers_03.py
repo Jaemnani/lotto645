@@ -82,7 +82,27 @@ class LSTMNet(nn.Module):
         out = self.fc(out[:, -1, :])
         # out = self.activate(out)
         return out
-    
+
+class DeepLSTMNet(nn.Module):
+            def __init__(self, input_size, hidden_size, num_layers, output_size=45):
+                super(DeepLSTMNet, self).__init__()
+                self.hidden_size = hidden_size
+                self.num_layers = num_layers
+                self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+                self.fc1 = nn.Linear(hidden_size, hidden_size)
+                self.fc2 = nn.Linear(hidden_size, hidden_size)
+                self.fc_out = nn.Linear(hidden_size, output_size)
+                self.relu = nn.ReLU()
+
+            def forward(self, x):
+                h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+                c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+                out, _ = self.lstm(x, (h0, c0))
+                out = self.relu(self.fc1(out[:, -1, :]))
+                out = self.relu(self.fc2(out))
+                out = self.fc_out(out)
+                return out
+        
 class MLPNet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(MLPNet, self).__init__()
@@ -116,6 +136,8 @@ class DeepMLPNet(nn.Module):
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
         x = self.relu(self.fc4(x))
+        x = self.relu(self.fc5(x))
+        x = self.relu(self.fc5(x))
         x = self.relu(self.fc5(x))
         x = self.sigmoid(self.fc_out(x))
         return x
@@ -208,26 +230,7 @@ def main():
         # scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True)
 
 
-        class DeepLSTMNet(nn.Module):
-            def __init__(self, input_size, hidden_size, num_layers, output_size=45):
-                super(DeepLSTMNet, self).__init__()
-                self.hidden_size = hidden_size
-                self.num_layers = num_layers
-                self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-                self.fc1 = nn.Linear(hidden_size, hidden_size)
-                self.fc2 = nn.Linear(hidden_size, hidden_size)
-                self.fc_out = nn.Linear(hidden_size, output_size)
-                self.relu = nn.ReLU()
-
-            def forward(self, x):
-                h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-                c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-                out, _ = self.lstm(x, (h0, c0))
-                out = self.relu(self.fc1(out[:, -1, :]))
-                out = self.relu(self.fc2(out))
-                out = self.fc_out(out)
-                return out
-    
+        
 
         cur_iters = 0
         cur_epochs = 0
@@ -334,10 +337,12 @@ def main():
             val_losses.append(val_loss)
             val_accuracies.append(val_accuracy)
 
-            # print("val diff ", val_accuracy, best_val_accuracy)
-            # print("lossdiff ", val_loss, lowest_val_loss)
-            if val_accuracy > best_val_accuracy:
+            # print("val diff ", val_accuracy, best_val_accuracy, val_accuracy > best_val_accuracy)
+            # print("lossdiff ", val_loss, lowest_val_loss, val_loss < lowest_val_loss)
+            if val_accuracy >= best_val_accuracy:
+                
                 best_val_accuracy = val_accuracy
+
                 if val_loss < lowest_val_loss:
                     lowest_val_loss = val_loss
                     best_epoch = epoch
@@ -347,13 +352,18 @@ def main():
             print(f'Epoch [{epoch+1}/{num_epochs}], '
                 f'Train Loss: {train_loss:.8f}, Train Accuracy: {train_accuracy:.8f}, '
                 f'Val Loss: {val_loss:.8f}, Val Accuracy: {val_accuracy:.8f}')
+            
+        
+        # torch.load("best_model_ball_%d.pth"%(bn))
+        model.load_state_dict(torch.load("best_model_ball_%d.pth"%(bn)))
+        model.eval()
 
-            test_pred = model(torch.tensor([test_onehots]).to(torch.float32).to("mps"))
-            test_pred = F.softmax(test_pred, dim=1)
-            test_pred = test_pred.cpu().detach().numpy().flatten()
-            for i in range(5):
-                final_numbers.append(gen_numbers_from_probability(test_pred))
-            final_numbers = np.array(final_numbers)
+        test_pred = model(torch.tensor([test_onehots]).to(torch.float32).to("mps"))
+        test_pred = F.softmax(test_pred, dim=1)
+        test_pred = test_pred.cpu().detach().numpy().flatten()
+        for i in range(5):
+            final_numbers.append(gen_numbers_from_probability(test_pred))
+        final_numbers = np.array(final_numbers)
         print("final_numbers : \n", final_numbers)
         print("")
         result_numbers.append(final_numbers)
