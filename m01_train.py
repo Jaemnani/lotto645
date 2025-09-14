@@ -8,6 +8,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils import data
 from tqdm import tqdm
+from m01_model import LSTMNet
 
 def get_info(start, end, 
              basic_url = "https://www.dhlottery.co.kr/gameResult.do?method=byWin&drwNo=" # 임의의 회차를 얻기 위한 주소
@@ -60,25 +61,7 @@ class LHistory(data.Dataset):
     def __len__(self):
         return len(self.datas)-1
     
-class LSTMNet(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size=45):
-        super(LSTMNet, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, output_size)
-        self.activate = nn.Sigmoid()
-        
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :])
-        out = self.activate(out)
-        return out
-
 def main(): 
-    
     # device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     device = 'cpu'
     history_path = "./history.csv"
@@ -152,7 +135,7 @@ def main():
 
     curve_1st = []
     curve_mean = []
-    num_epochs = 1000
+    num_epochs = 88
     for epoch in tqdm(range(num_epochs)):
         model.train()
         for (xs, ys) in train_loader:
@@ -202,6 +185,7 @@ def main():
         # scheduler.step()
             # print("val lossres , "Check Count : ", sum(res.values()))
     print(last_pred)
+    torch.save(model.state_dict(), "m01_model.pt")
     print("Train done.")
     
 if __name__ == "__main__":

@@ -165,7 +165,7 @@ for ball_i in range(1,6):
     
     # (c) 모델 학습
     print(f"\n===== [Ball {ball_i}] 모델 학습 시작 =====")
-    model = train_model(X_train, Y_train, X_val, Y_val, epochs=20, batch_size=16, lr=1e-3, hidden_dim=64)
+    model = train_model(X_train, Y_train, X_val, Y_val, epochs=200, batch_size=16, lr=1e-3, hidden_dim=64)
     
     # (d) val set 정확도(혹은 F1 등) 측정 (간단히 0.5 threshold로 multi-label Accuracy 계산)
     model.eval()

@@ -85,9 +85,6 @@ print('Max Page: ', page_idx)
 
 #
 
-
-
-
 history_numbers = history[:, 1]
 
 # 로그인 필요함.

@@ -125,8 +125,8 @@ class DeepMLPNet(nn.Module):
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, hidden_size)
-        self.fc4 = nn.Linear(hidden_size, hidden_size)
-        self.fc5 = nn.Linear(hidden_size, hidden_size)
+        # self.fc4 = nn.Linear(hidden_size, hidden_size)
+        # self.fc5 = nn.Linear(hidden_size, hidden_size)
         self.fc_out = nn.Linear(hidden_size, output_size)
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
@@ -135,10 +135,10 @@ class DeepMLPNet(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.relu(self.fc3(x))
-        x = self.relu(self.fc4(x))
-        x = self.relu(self.fc5(x))
-        x = self.relu(self.fc5(x))
-        x = self.relu(self.fc5(x))
+        # x = self.relu(self.fc4(x))
+        # x = self.relu(self.fc5(x))
+        # x = self.relu(self.fc5(x))
+        # x = self.relu(self.fc5(x))
         x = self.sigmoid(self.fc_out(x))
         return x
 
@@ -247,7 +247,7 @@ def main():
         lowest_val_loss = 99
         best_epoch = 0
 
-        num_epochs = 500
+        num_epochs = 100
         for epoch in range(num_epochs):
             final_numbers = []
 

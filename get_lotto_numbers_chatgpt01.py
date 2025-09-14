@@ -40,16 +40,16 @@ for ball_num in freq_by_ball:
     sorted_list = sorted(freq_by_ball[ball_num].items(), key=lambda x: x[1], reverse=True)
     freq_by_ball_sorted[ball_num] = sorted_list
 
-# 예시 출력(각 공에 대해 상위 10개만)
-for ball_num in sorted(freq_by_ball_sorted.keys()):
-    count_rows = row_count_by_ball.get(ball_num, 0)
-    print(f"=== 공 {ball_num} ===")
-    print(f"  - 데이터(행) 개수: {count_rows}개")
+# # 예시 출력(각 공에 대해 상위 10개만)
+# for ball_num in sorted(freq_by_ball_sorted.keys()):
+#     count_rows = row_count_by_ball.get(ball_num, 0)
+#     print(f"=== 공 {ball_num} ===")
+#     print(f"  - 데이터(행) 개수: {count_rows}개")
 
-    print(f"=== 공 {ball_num}에서 많이 나온 번호 TOP 10 ===")
-    for num, cnt in freq_by_ball_sorted[ball_num][:45]:
-        print(f"  번호 {num}: {cnt}회")
-    print()
+#     print(f"=== 공 {ball_num}에서 많이 나온 번호 TOP 10 ===")
+#     for num, cnt in freq_by_ball_sorted[ball_num][:45]:
+#         print(f"  번호 {num}: {cnt}회")
+#     print()
 
 # 4) 간단한 '예측' 함수 만들기
 #    - "다음에 공 X가 뽑힌다면" 상위 6개 번호를 고정으로 내놓거나,
@@ -82,10 +82,19 @@ def predict_numbers(ball_num, top_k=6, use_weighted=False):
 
 
 # 5) 예측 사용 예시
-print("=== 공 1로 추첨된다고 가정했을 때, 빈도 TOP 6 예측 ===")
-print(predict_numbers(1, top_k=6, use_weighted=False))
+result = []
+for i in range(5):
+    bn = i+1
+    print(f"=== 공 {bn}로 추첨된다고 가정했을 때, 빈도 TOP 6 예측 ===")
+    res = predict_numbers(bn, top_k=6, use_weighted=False)
+    res.sort()
+    result.append(res)
+    print(res)
 
-print("\n=== 공 3으로 추첨된다고 가정했을 때, 가중 랜덤 6개 예측 ===")
-print(predict_numbers(3, top_k=6, use_weighted=True))
+
+
+
+# print("\n=== 공 3으로 추첨된다고 가정했을 때, 가중 랜덤 6개 예측 ===")
+# print(predict_numbers(3, top_k=6, use_weighted=True))
 
 print()
