@@ -8,6 +8,35 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
 import os
 import sys
+from datetime import datetime
+import pytz
+
+# Check time
+def check_time():
+    # Set KST timezone
+    kst = pytz.timezone('Asia/Seoul')
+    now = datetime.now(kst)
+    weekday = now.weekday() # 0:Mon, 6:Sun
+    hour = now.hour
+
+    print(f"Current KST Time: {now.strftime('%Y-%m-%d %H:%M:%S')} (Weekday: {weekday})")
+
+    # Purchase Hours:
+    # Saturday (5): 06:00 ~ 20:00
+    # Others: 06:00 ~ 24:00 (Technically end of day, but site might close slightly before)
+    
+    if weekday == 5: # Saturday
+        if 6 <= hour < 20: 
+            return True
+        else:
+            print("Saturday: Purchase only available between 06:00 ~ 20:00 KST.")
+            return False
+    else: # Weekdays & Sunday
+        if 6 <= hour < 24:
+            return True
+        else:
+            print("Weekday/Sunday: Purchase only available between 06:00 ~ 24:00 KST.")
+            return False
 
 # Credentials
 # Environment Variables are required for security
@@ -196,9 +225,15 @@ def buy_lotto(driver):
         
         # 3. Wait for Iframe
         print("Waiting for game iframe...")
-        iframe = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.ID, "ifrm_tab"))
-        )
+        try:
+            iframe = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.ID, "ifrm_tab"))
+            )
+        except TimeoutException:
+            print("Failed to find 'ifrm_tab' iframe. Dumping page source for debug...")
+            with open("debug_page_source.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            raise Exception("Timeout: checking for 'ifrm_tab'")
         driver.switch_to.frame(iframe)
         print("Switched to game iframe.")
         
@@ -321,6 +356,10 @@ def buy_lotto(driver):
         pass
 
 def main():
+    if not check_time():
+        print("Outside of purchase hours. Exiting.")
+        sys.exit(0)
+
     driver = setup_driver()
     try:
         if login(driver):
