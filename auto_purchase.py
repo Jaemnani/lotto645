@@ -6,16 +6,28 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
-import sys
+import os
 
-# Credentials found in codebase (checking if these work for dhlottery)
-USER_ID = "yaejm"
-USER_PW = ""
+# Credentials
+# Prioritize Environment Variables (for GitHub Actions), fallback to hardcoded for local testing
+USER_ID = os.getenv("LOTTO_USER_ID", "yaejm")
+USER_PW = os.getenv("LOTTO_USER_PW", "woans955!")
 
 def setup_driver():
     chrome_options = Options()
-    # chrome_options.add_argument("--headless") # Comment out for visual verification
-    chrome_options.add_argument("--window-size=1920,1080")
+    
+    # Headless mode for clean automation (Mandatory for GitHub Actions)
+    # Check if running in GitHub Actions or explicitly requested
+    if os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("HEADLESS") == "true":
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        # Add User-Agent to prevent bot detection in headless
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
+    else:
+        # Local non-headless (visible)
+        # chrome_options.add_argument("--headless") # Comment out for visual verification
+        chrome_options.add_argument("--window-size=1920,1080")
     
     # Try to find chromedriver or let selenium manager handle it
     try:
