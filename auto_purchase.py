@@ -7,11 +7,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import time
 import os
+import sys
 
 # Credentials
-# Prioritize Environment Variables (for GitHub Actions), fallback to hardcoded for local testing
-USER_ID = os.getenv("LOTTO_USER_ID", "yaejm")
-USER_PW = os.getenv("LOTTO_USER_PW", "woans955!")
+# Environment Variables are required for security
+USER_ID = os.getenv("LOTTO_USER_ID", "")
+USER_PW = os.getenv("LOTTO_USER_PW", "")
 
 def setup_driver():
     chrome_options = Options()
