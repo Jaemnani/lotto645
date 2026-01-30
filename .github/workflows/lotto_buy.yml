@@ -1,6 +1,8 @@
 name: Lotto 6/45 Auto Buy
 
 on:
+  push:
+    branches: [ "master" ]
   schedule:
     # Run every Saturday at 08:50 KST (Friday 23:50 UTC)
     # 50 23 * * 5
