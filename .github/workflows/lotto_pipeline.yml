@@ -1,0 +1,124 @@
+name: Lotto Pipeline (Train + Purchase)
+#
+# 트리거:
+#   1. push  — data/history_from_cafe.csv 가 변경될 때 (맥미니 크롤 결과)
+#   2. schedule — 매주 금요일 오전 10시 KST (01:00 UTC)
+#      (데이터가 이미 push 됐을 경우 재실행 방지 목적으로 스케줄도 유지)
+#   3. workflow_dispatch — 수동 실행
+#
+# 동작:
+#   - training_meta.json 의 last_trained_round vs CSV 최신 회차 비교
+#   - 새 데이터 있으면 → 재학습 → best_m02.pth + training_meta.json 커밋
+#   - 항상 → 예측(5공세트) + 동행복권 자동 구매
+
+on:
+  push:
+    paths:
+      - 'data/history_from_cafe.csv'
+  schedule:
+    - cron: '0 1 * * 5'   # 금요일 01:00 UTC = 10:00 KST
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+    # ── 체크아웃 ──────────────────────────────────────────────────────────────
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    # ── Python 설정 ───────────────────────────────────────────────────────────
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    # ── 의존성 설치 ───────────────────────────────────────────────────────────
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        # CPU-only torch (용량 절약)
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install pandas numpy==1.26.4 pytz selenium
+
+    # ── 재학습 필요 여부 확인 ─────────────────────────────────────────────────
+    - name: Check if retraining needed
+      id: check_train
+      run: |
+        python - <<'PYEOF'
+        import os, json, csv
+        from pathlib import Path
+
+        meta_path = Path("model_m02_claude/training_meta.json")
+        data_path = Path("data/history_from_cafe.csv")
+
+        last_trained = 0
+        if meta_path.exists():
+            with open(meta_path) as f:
+                last_trained = json.load(f).get("last_trained_round", 0)
+
+        latest_round = 0
+        with open(data_path) as f:
+            for row in csv.reader(f):
+                try:
+                    latest_round = max(latest_round, int(row[1]))
+                except (ValueError, IndexError):
+                    pass
+
+        print(f"last_trained_round : {last_trained}")
+        print(f"latest_data_round  : {latest_round}")
+        needs = latest_round > last_trained
+        print(f"needs_train        : {needs}")
+
+        out = os.environ.get("GITHUB_OUTPUT", "")
+        if out:
+            with open(out, "a") as f:
+                f.write(f"needs_train={'true' if needs else 'false'}\n")
+                f.write(f"latest_round={latest_round}\n")
+        PYEOF
+
+    # ── 모델 재학습 (새 데이터가 있을 때만) ──────────────────────────────────
+    - name: Train model
+      if: steps.check_train.outputs.needs_train == 'true'
+      run: |
+        echo "새 데이터 감지 → 모델 재학습 시작"
+        cd model_m02_claude
+        python m02_train.py
+
+    # ── 모델 아티팩트 커밋 (재학습 후) ───────────────────────────────────────
+    - name: Commit model artifacts
+      if: steps.check_train.outputs.needs_train == 'true'
+      run: |
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add model_m02_claude/best_m02.pth model_m02_claude/training_meta.json
+        git commit -m "model: 제${{ steps.check_train.outputs.latest_round }}회 데이터로 재학습 ($(date '+%Y-%m-%d'))"
+        git push
+
+    # ── 예측 + 자동 구매 ─────────────────────────────────────────────────────
+    - name: Run prediction and purchase
+      env:
+        LOTTO_USER_ID: ${{ secrets.LOTTO_USER_ID }}
+        LOTTO_USER_PW: ${{ secrets.LOTTO_USER_PW }}
+        SKIP_CRAWL: "1"
+        SKIP_TRAIN: "1"
+        HEADLESS: "true"
+      run: |
+        python pipeline.py
+
+    # ── 구매 결과 아티팩트 업로드 ─────────────────────────────────────────────
+    - name: Upload pipeline result
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pipeline-result-${{ github.run_number }}
+        path: |
+          pipeline_result.json
+          purchase_error.png
+          purchase_failure.png
+        if-no-files-found: ignore
+        retention-days: 14

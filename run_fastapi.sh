@@ -1,1 +1,0 @@
-uvicorn m01_predict_api:app --reload

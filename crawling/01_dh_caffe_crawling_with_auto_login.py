@@ -17,6 +17,7 @@ import base64
 import time
 import pickle
 import random
+from datetime import date, timedelta
 
 import numpy as np
 import pyautogui
@@ -38,6 +39,91 @@ LOGIN_URL  = "https://nid.naver.com/nidlogin.login"
 COOKIE_PATH = os.path.join(os.path.dirname(__file__), "naver_cookies.pkl")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "../data/history_from_cafe.csv")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyADvPITzZOpRZF7Sgm_Fo2Mkm9-pgEdeIs")  # https://aistudio.google.com/apikey 에서 발급
+
+# ─────────────────────────────────────────────
+# 추첨일 유틸
+# ─────────────────────────────────────────────
+ROUND1_DATE = date(2002, 12, 7)   # 1회 추첨일 (토요일)
+
+def round_to_date(round_num: int) -> str:
+    """회차 번호 → 추첨일 문자열 (YYYY-MM-DD)"""
+    return (ROUND1_DATE + timedelta(weeks=round_num - 1)).strftime("%Y-%m-%d")
+
+def check_needs_update(history_path: str) -> bool:
+    """
+    CSV를 읽어 마지막 추첨일을 확인하고, 새 회차 데이터가 있으면 True 반환.
+    브라우저 없이 파일만으로 판단.
+
+    갱신 필요 조건:
+      오늘 날짜 >= 마지막 추첨일 + 7일 (다음 토요일 추첨이 이미 지남)
+    """
+    if not os.path.exists(history_path):
+        print("[갱신 체크] 히스토리 파일 없음 → 크롤링 필요")
+        return True
+
+    try:
+        with open(history_path, "r") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if not lines:
+            print("[갱신 체크] 파일이 비어 있음 → 크롤링 필요")
+            return True
+
+        # 컬럼 수로 draw_date 포함 여부 판단
+        cols = lines[-1].split(",")
+        if len(cols) == 10:          # ball_set, round, draw_date, n1~n6, bonus
+            last_date_str = cols[2].strip()
+            last_draw = date.fromisoformat(last_date_str)
+        elif len(cols) == 9:         # 구버전 (draw_date 없음) → 회차로 역산
+            last_round = int(cols[1].strip())
+            last_draw  = ROUND1_DATE + timedelta(weeks=last_round - 1)
+        else:
+            print("[갱신 체크] 알 수 없는 CSV 형식 → 크롤링 필요")
+            return True
+
+        next_draw = last_draw + timedelta(weeks=1)
+        today     = date.today()
+        needs     = today >= next_draw
+
+        print(f"[갱신 체크] 마지막 추첨일: {last_draw}  |  다음 추첨일: {next_draw}  |  오늘: {today}")
+        if needs:
+            print("[갱신 체크] 새 회차 데이터 있음 → 크롤링 필요")
+        else:
+            print("[갱신 체크] 최신 데이터 보유 중 → 크롤링 불필요")
+        return needs
+
+    except Exception as e:
+        print(f"[갱신 체크] 오류 ({e}) → 안전하게 크롤링 진행")
+        return True
+
+def migrate_csv_add_date(history_path: str):
+    """
+    구버전 CSV (9컬럼)를 draw_date 포함 10컬럼으로 변환.
+    이미 10컬럼이면 아무것도 하지 않음.
+    """
+    if not os.path.exists(history_path):
+        return
+    with open(history_path, "r") as f:
+        lines = [l.strip() for l in f if l.strip()]
+    if not lines:
+        return
+    if len(lines[0].split(",")) == 10:
+        return   # 이미 마이그레이션됨
+
+    print("[마이그레이션] draw_date 컬럼 추가 중...")
+    new_lines = []
+    for line in lines:
+        cols = line.split(",")
+        if len(cols) != 9:
+            new_lines.append(line)
+            continue
+        round_num = int(cols[1].strip())
+        draw_date = round_to_date(round_num)
+        new_cols  = [cols[0], cols[1], draw_date] + cols[2:]
+        new_lines.append(",".join(new_cols))
+
+    with open(history_path, "w") as f:
+        f.write("\n".join(new_lines) + "\n")
+    print(f"[마이그레이션] 완료: {len(new_lines)}행 변환")
 
 # ─────────────────────────────────────────────
 # 드라이버 생성 (webdriver_manager로 Chrome 버전 자동 매칭)
@@ -655,8 +741,9 @@ def crawl_cafe(driver, history):
             print(f"당첨번호 파싱 오류 (gap={gap_w})")
             continue
 
-        res_rehearsal = np.append(np.array([ballset, tap]), numbers_rehearsal)
-        res_winning   = np.append(np.array([ballset, tap]), numbers_winning)
+        draw_date_str = round_to_date(int(tap))
+        res_rehearsal = np.append(np.array([ballset, tap, draw_date_str]), numbers_rehearsal)
+        res_winning   = np.append(np.array([ballset, tap, draw_date_str]), numbers_winning)
 
         result_history.append(res_rehearsal)
         result_history.append(res_winning)
@@ -673,12 +760,28 @@ def crawl_cafe(driver, history):
 # 엔트리포인트
 # ─────────────────────────────────────────────
 def main():
-    # 기존 히스토리 로드
+    # ── 구버전 CSV 마이그레이션 (draw_date 없으면 추가) ──────────────────────
+    migrate_csv_add_date(HISTORY_PATH)
+
+    # ── 갱신 필요 여부 사전 체크 (브라우저 없이) ─────────────────────────────
+    if not check_needs_update(HISTORY_PATH):
+        print("최신 데이터 보유 중. 크롤링을 건너뜁니다.")
+        print("done")
+        return
+
+    # ── 기존 히스토리 로드 ────────────────────────────────────────────────────
     if os.path.exists(HISTORY_PATH):
-        history = np.loadtxt(HISTORY_PATH, delimiter=",").astype(int)
+        # draw_date(문자열) 컬럼이 있으므로 dtype=str로 로드
+        raw = np.loadtxt(HISTORY_PATH, delimiter=",", dtype=str)
+        # 회차 비교용: int 컬럼만 추출 (0=ball_set, 1=round)
+        history_int = raw[:, [0, 1]].astype(int)
     else:
         print(f"[경고] 히스토리 파일 없음: {HISTORY_PATH}")
-        history = np.array([]).reshape(0, 9)  # 빈 배열
+        raw = np.array([]).reshape(0, 10)
+        history_int = np.array([]).reshape(0, 2).astype(int)
+
+    # crawl_cafe 가 참조하는 history 형식 맞춤 (회차 비교에만 사용)
+    history_for_crawl = history_int
 
     driver = create_driver()
 
@@ -687,7 +790,7 @@ def main():
             print("로그인 실패. 프로그램을 종료합니다.")
             return
 
-        result_history = crawl_cafe(driver, history)
+        result_history = crawl_cafe(driver, history_for_crawl)
 
     finally:
         driver.quit()
