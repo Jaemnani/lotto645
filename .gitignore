@@ -1,2 +1,4 @@
 *.pth
 *.pkl
+activate
+.env.local

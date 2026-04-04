@@ -1,0 +1,14 @@
+# 웹 서버 (Oracle Cloud)
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.40
+psycopg2-binary==2.9.10
+apscheduler==3.10.4
+python-multipart==0.0.20
+pytz==2025.1
+requests==2.32.3
+
+# ML 모델 (기존)
+torch
+numpy==1.26.4
+pandas
