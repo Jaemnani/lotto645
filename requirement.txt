@@ -8,3 +8,5 @@ pandas
 matplotlib
 numpy==1.26.4
 pytz
+pyautogui
+webdriver_manager

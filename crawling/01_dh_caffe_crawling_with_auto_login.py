@@ -615,7 +615,7 @@ def naver_login(driver) -> bool:
 # 메인 크롤링 로직 (원본과 동일)
 # ─────────────────────────────────────────────
 def crawl_cafe(driver, history):
-    history_numbers = history[:, 1]
+    history_numbers = history[:, 1].astype(int)
 
     page_url = (
         "https://cafe.naver.com/dhlottery"
@@ -720,7 +720,7 @@ def crawl_cafe(driver, history):
         # 리허설 번호 파싱
         gap_r = name_winning - name_rehearsal
         if gap_r == 2:
-            numbers_rehearsal = np.array(content2[name_rehearsal + 1].split(" "))
+            numbers_rehearsal = np.array(content2[name_rehearsal + 1].split())
         elif gap_r == 8:
             numbers_rehearsal = content3[name_rehearsal + 1: name_rehearsal + 8]
         else:
@@ -730,10 +730,10 @@ def crawl_cafe(driver, history):
         # 당첨 번호 파싱
         gap_w = name_nextwin - name_winning
         if gap_w == 2:
-            numbers_winning = np.array(content2[name_winning + 1].split(" "))
+            numbers_winning = np.array(content2[name_winning + 1].split())
         elif gap_w in (3, 4):
             numbers_winning = np.array(
-                sum([c.split(" ") for c in content2[name_winning + 1: name_nextwin]], [])
+                [n for c in content2[name_winning + 1: name_nextwin] for n in c.split() if n]
             )
         elif gap_w == 8:
             numbers_winning = content3[name_winning + 1: name_winning + 8]
@@ -773,15 +773,13 @@ def main():
     if os.path.exists(HISTORY_PATH):
         # draw_date(문자열) 컬럼이 있으므로 dtype=str로 로드
         raw = np.loadtxt(HISTORY_PATH, delimiter=",", dtype=str)
-        # 회차 비교용: int 컬럼만 추출 (0=ball_set, 1=round)
-        history_int = raw[:, [0, 1]].astype(int)
     else:
         print(f"[경고] 히스토리 파일 없음: {HISTORY_PATH}")
         raw = np.array([]).reshape(0, 10)
         history_int = np.array([]).reshape(0, 2).astype(int)
 
-    # crawl_cafe 가 참조하는 history 형식 맞춤 (회차 비교에만 사용)
-    history_for_crawl = history_int
+    # crawl_cafe 에 전체 컬럼(10열)을 넘겨야 기존 행 재사용 시 shape 일치
+    history_for_crawl = raw
 
     driver = create_driver()
 

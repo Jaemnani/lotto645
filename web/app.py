@@ -196,20 +196,24 @@ def _ann_to_dict(ann: WeeklyAnnouncement) -> dict:
 # ── API: 관리자 ────────────────────────────────────────────────────────────────
 @app.post("/api/admin/fetch-and-calc")
 def admin_fetch_and_calc(
+    round_no: Optional[int] = None,
     db: Session = Depends(get_db),
     _: None = Depends(_require_admin),
 ):
-    """수동으로 최신 추첨 결과 수집 + 통계 계산 (관리자 전용)"""
-    latest = get_latest_round()
-    data   = fetch_draw(latest)
+    """
+    추첨 결과 수집 + 통계 계산 (관리자 전용)
+    round_no 미지정 시 최신 회차 자동 조회
+    """
+    target = round_no if round_no else get_latest_round()
+    data   = fetch_draw(target)
     if not data:
-        raise HTTPException(404, f"{latest}회차 결과 아직 미발표")
+        raise HTTPException(404, f"{target}회차 결과 조회 실패 (미발표 또는 네트워크 오류)")
 
     draw = save_draw_result(db, data)
-    ann  = calculate_and_save_stats(db, latest)
+    ann  = calculate_and_save_stats(db, target)
 
     return {
-        "round":   latest,
+        "round":   target,
         "numbers": [draw.n1, draw.n2, draw.n3, draw.n4, draw.n5, draw.n6],
         "bonus":   draw.bonus,
         "stats":   ann.stats if ann else None,

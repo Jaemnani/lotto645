@@ -1,4 +1,5 @@
 # 웹 서버 (Oracle Cloud)
+python-dotenv==1.1.0
 fastapi==0.115.12
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.40

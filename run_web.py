@@ -5,6 +5,10 @@ Oracle Cloud 서버 실행 엔트리포인트
 
 import os
 import uvicorn
+from dotenv import load_dotenv
+
+# load_dotenv()  # 프로젝트 루트의 .env 자동 로드
+load_dotenv(override=True)
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")

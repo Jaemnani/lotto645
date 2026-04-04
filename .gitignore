@@ -1,4 +1,5 @@
 *.pth
 *.pkl
 activate
-.env.local
+.env
+__pycache__
