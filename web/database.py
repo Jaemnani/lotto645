@@ -1,80 +1,138 @@
 """
-Supabase PostgreSQL 연결 및 SQLAlchemy 모델 정의
-환경변수 DATABASE_URL 에 Supabase connection string 설정 필요
+Supabase 연결 (API Key 방식)
+환경변수 SUPABASE_URL, SUPABASE_KEY 설정 필요
 """
 
 import os
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date
+from typing import Optional
 
-from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Integer, JSON, String, create_engine
-)
-from sqlalchemy.orm import declarative_base, sessionmaker
+from supabase import create_client, Client
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,       # 연결 끊김 자동 감지
-    pool_recycle=300,          # 5분마다 연결 재사용
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+_client: Optional[Client] = None
 
 
-class DrawResult(Base):
-    """동행복권 공식 추첨 결과"""
-    __tablename__ = "draw_results"
-
-    id         = Column(Integer, primary_key=True)
-    round      = Column(Integer, unique=True, index=True, nullable=False)
-    draw_date  = Column(Date, nullable=False)
-    n1         = Column(Integer, nullable=False)
-    n2         = Column(Integer, nullable=False)
-    n3         = Column(Integer, nullable=False)
-    n4         = Column(Integer, nullable=False)
-    n5         = Column(Integer, nullable=False)
-    n6         = Column(Integer, nullable=False)
-    bonus      = Column(Integer, nullable=False)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+def get_supabase() -> Client:
+    global _client
+    if _client is None:
+        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _client
 
 
-class UserExtraction(Base):
-    """사용자가 추출한 번호"""
-    __tablename__ = "user_extractions"
-
-    id           = Column(Integer, primary_key=True)
-    session_id   = Column(String, index=True, nullable=False)
-    target_round = Column(Integer, index=True, nullable=False)  # 응모 대상 회차
-    extracted_at = Column(DateTime, default=datetime.utcnow)
-    ball_set     = Column(Integer, nullable=False)  # 1-5
-    strategy     = Column(Integer, nullable=False)  # 1-4
-    numbers      = Column(JSON, nullable=False)     # [n1, n2, n3, n4, n5, n6]
-    rank         = Column(Integer, nullable=True)   # 추첨 후 계산 (1-5, 6=낙첨)
-    match_count  = Column(Integer, nullable=True)
-    bonus_match  = Column(Boolean, nullable=True)
-
-
-class WeeklyAnnouncement(Base):
-    """주간 통계 공지사항"""
-    __tablename__ = "weekly_announcements"
-
-    id                = Column(Integer, primary_key=True)
-    round             = Column(Integer, unique=True, index=True, nullable=False)
-    draw_date         = Column(Date, nullable=False)
-    winning_numbers   = Column(JSON, nullable=False)  # {"numbers": [...], "bonus": n}
-    stats             = Column(JSON, nullable=False)   # {"1등": n, ..., "낙첨": n, "total": n}
-    total_extractions = Column(Integer, default=0)
-    published_at      = Column(DateTime, default=datetime.utcnow)
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# FastAPI Depends 호환 이름
+def get_db() -> Client:
+    return get_supabase()
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    """Supabase에서 테이블은 대시보드/마이그레이션으로 생성합니다. (no-op)"""
+    pass
+
+
+# ── 데이터 클래스 ─────────────────────────────────────────────────────────────
+
+@dataclass
+class DrawResult:
+    round: int
+    draw_date: date
+    n1: int
+    n2: int
+    n3: int
+    n4: int
+    n5: int
+    n6: int
+    bonus: int
+    is_winning: bool = False             # False=모의추첨, True=실제 당첨번호
+    id: Optional[int] = None
+    ball_set: Optional[int] = None       # 카페 갱신 전 NULL
+    prize_1: Optional[int] = None        # 1등 당첨금 (원)
+    prize_2: Optional[int] = None
+    prize_3: Optional[int] = None
+    prize_4: Optional[int] = None        # 고정 50,000
+    prize_5: Optional[int] = None        # 고정 5,000
+    fetched_at: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DrawResult":
+        draw_date = d["draw_date"]
+        if isinstance(draw_date, str):
+            draw_date = date.fromisoformat(draw_date)
+        return cls(
+            id=d.get("id"),
+            round=d["round"],
+            draw_date=draw_date,
+            is_winning=d.get("is_winning", False),
+            ball_set=d.get("ball_set"),
+            n1=d["n1"], n2=d["n2"], n3=d["n3"],
+            n4=d["n4"], n5=d["n5"], n6=d["n6"],
+            bonus=d["bonus"],
+            prize_1=d.get("prize_1"),
+            prize_2=d.get("prize_2"),
+            prize_3=d.get("prize_3"),
+            prize_4=d.get("prize_4"),
+            prize_5=d.get("prize_5"),
+            fetched_at=d.get("fetched_at"),
+        )
+
+
+@dataclass
+class UserExtraction:
+    session_id: str
+    target_round: int
+    ball_set: int
+    strategy: int
+    numbers: list
+    id: Optional[int] = None
+    user_name: Optional[str] = None      # 계정 이름 (미계정 시 None)
+    phone_last4: Optional[str] = None    # 전화번호 뒷 4자리 (미계정 시 None)
+    extracted_at: Optional[str] = None
+    rank: Optional[int] = None
+    match_count: Optional[int] = None
+    bonus_match: Optional[bool] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "UserExtraction":
+        return cls(
+            id=d.get("id"),
+            session_id=d["session_id"],
+            user_name=d.get("user_name"),
+            phone_last4=d.get("phone_last4"),
+            target_round=d["target_round"],
+            ball_set=d["ball_set"],
+            strategy=d["strategy"],
+            numbers=d["numbers"],
+            extracted_at=d.get("extracted_at"),
+            rank=d.get("rank"),
+            match_count=d.get("match_count"),
+            bonus_match=d.get("bonus_match"),
+        )
+
+
+@dataclass
+class WeeklyAnnouncement:
+    round: int
+    draw_date: date
+    winning_numbers: dict
+    stats: dict
+    total_extractions: int = 0
+    id: Optional[int] = None
+    published_at: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "WeeklyAnnouncement":
+        draw_date = d["draw_date"]
+        if isinstance(draw_date, str):
+            draw_date = date.fromisoformat(draw_date)
+        return cls(
+            id=d.get("id"),
+            round=d["round"],
+            draw_date=draw_date,
+            winning_numbers=d["winning_numbers"],
+            stats=d["stats"],
+            total_extractions=d.get("total_extractions", 0),
+            published_at=d.get("published_at"),
+        )

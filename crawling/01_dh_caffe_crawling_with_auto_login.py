@@ -13,6 +13,7 @@
 
 import os
 import io
+import sys
 import base64
 import time
 import pickle
@@ -194,32 +195,19 @@ def login_with_cookies(driver) -> bool:
 def _set_input_value(driver, element, value: str):
     """
     React 기반 네이버 로그인 폼에 값을 입력하는 강화된 방식.
-    1) JavaScript nativeInputValueSetter로 React state 강제 갱신
+    1) 필드를 먼저 비운 뒤 JavaScript nativeInputValueSetter로 값 설정
     2) input/change 이벤트 dispatch로 React synthetic event 발생
-    3) 클립보드 붙여넣기로 최종 확인
     """
-    # React의 내부 setter를 통해 값 설정 (일반 value= 할당은 React가 무시함)
     driver.execute_script("""
         var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
             window.HTMLInputElement.prototype, 'value').set;
+        nativeInputValueSetter.call(arguments[0], '');
+        arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
         nativeInputValueSetter.call(arguments[0], arguments[1]);
         arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
         arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
     """, element, value)
     time.sleep(0.2)
-
-    # 클립보드 붙여넣기로 보완 (pyperclip → cmd+a → cmd+v)
-    try:
-        import pyperclip
-        pyperclip.copy(value)
-        element.click()
-        time.sleep(0.3)
-        pyautogui.hotkey("command", "a")
-        time.sleep(0.1)
-        pyautogui.hotkey("command", "v")
-        time.sleep(0.3)
-    except Exception:
-        pass
 
 
 def login_with_pyautogui(driver) -> bool:
@@ -776,7 +764,6 @@ def main():
     else:
         print(f"[경고] 히스토리 파일 없음: {HISTORY_PATH}")
         raw = np.array([]).reshape(0, 10)
-        history_int = np.array([]).reshape(0, 2).astype(int)
 
     # crawl_cafe 에 전체 컬럼(10열)을 넘겨야 기존 행 재사용 시 shape 일치
     history_for_crawl = raw
@@ -797,6 +784,19 @@ def main():
         result_array = np.array(result_history)
         np.savetxt(HISTORY_PATH, result_array, delimiter=",", fmt="%s")
         print(f"\n저장 완료: {HISTORY_PATH}")
+
+        # ── Supabase 동기화 ───────────────────────────────────────────
+        print("\n[동기화] Supabase 업로드 중...")
+        try:
+            import subprocess
+            sync_script = os.path.join(os.path.dirname(__file__), "../scripts/sync_cafe_history.py")
+            result = subprocess.run(
+                [sys.executable, sync_script],
+                check=True, capture_output=True, text=True
+            )
+            print(result.stdout.strip())
+        except Exception as e:
+            print(f"[동기화] 실패 — 수동으로 실행하세요: python scripts/sync_cafe_history.py\n  오류: {e}")
     else:
         print("수집된 데이터 없음.")
 

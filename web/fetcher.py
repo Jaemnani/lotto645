@@ -13,7 +13,7 @@ from datetime import date
 
 import requests
 from bs4 import BeautifulSoup
-from sqlalchemy.orm import Session
+from supabase import Client
 
 from .database import DrawResult
 
@@ -144,27 +144,64 @@ def fetch_draw(round_no: int) -> dict | None:
     return None
 
 
-def save_draw_result(db: Session, data: dict) -> DrawResult:
-    """추첨 결과 DB 저장 (이미 있으면 기존 반환)"""
-    existing = db.query(DrawResult).filter(DrawResult.round == data["round"]).first()
-    if existing:
-        return existing
+def save_draw_result(db: Client, data: dict) -> DrawResult:
+    """
+    공홈 추첨 결과 DB 저장 — 항상 is_winning=True (실제 당첨번호) 행만 다룸.
 
+    - (round, is_winning=True) 행이 이미 있으면 → prize 등 추가 데이터 UPDATE 후 반환
+    - 없으면 → INSERT (ball_set은 카페 크롤링 전까지 NULL)
+    """
     nums = data["numbers"]
     draw_date = (
         date.fromisoformat(data["draw_date"])
         if data.get("draw_date")
         else date.today()
     )
-    draw = DrawResult(
-        round     = data["round"],
-        draw_date = draw_date,
-        n1=nums[0], n2=nums[1], n3=nums[2],
-        n4=nums[3], n5=nums[4], n6=nums[5],
-        bonus     = data["bonus"],
+
+    # 공홈에서 제공하는 추가 데이터 (있을 때만 포함)
+    extra = {}
+    for field in ("prize_1", "prize_2", "prize_3", "prize_4", "prize_5"):
+        if data.get(field) is not None:
+            extra[field] = data[field]
+
+    existing = (
+        db.table("draw_results")
+        .select("*")
+        .eq("round", data["round"])
+        .eq("is_winning", True)
+        .execute()
+        .data
     )
-    db.add(draw)
-    db.commit()
-    db.refresh(draw)
-    logger.info(f"[fetcher] {data['round']}회차 저장: {nums} + {data['bonus']}")
-    return draw
+
+    if existing:
+        # 카페에서 먼저 들어온 행 → prize 등 추가 데이터만 업데이트
+        if extra:
+            db.table("draw_results") \
+              .update(extra) \
+              .eq("round", data["round"]) \
+              .eq("is_winning", True) \
+              .execute()
+            logger.info(f"[fetcher] {data['round']}회차 prize 업데이트: {extra}")
+        result = (
+            db.table("draw_results")
+            .select("*")
+            .eq("round", data["round"])
+            .eq("is_winning", True)
+            .execute()
+            .data[0]
+        )
+        return DrawResult.from_dict(result)
+
+    # 카페 크롤링 전 공홈이 먼저 → INSERT
+    row = {
+        "round":      data["round"],
+        "draw_date":  draw_date.isoformat(),
+        "is_winning": True,
+        "n1": nums[0], "n2": nums[1], "n3": nums[2],
+        "n4": nums[3], "n5": nums[4], "n6": nums[5],
+        "bonus":      data["bonus"],
+        **extra,
+    }
+    inserted = db.table("draw_results").insert(row).execute().data[0]
+    logger.info(f"[fetcher] {data['round']}회차 저장 (is_winning=True): {nums} + {data['bonus']}")
+    return DrawResult.from_dict(inserted)

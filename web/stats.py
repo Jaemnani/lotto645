@@ -5,9 +5,9 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy.orm import Session
+from supabase import Client
 
-from .database import DrawResult, UserExtraction, WeeklyAnnouncement
+from .database import DrawResult, WeeklyAnnouncement
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def calculate_rank(
     else:                         return 6, match, False
 
 
-def calculate_and_save_stats(db: Session, round_no: int) -> WeeklyAnnouncement | None:
+def calculate_and_save_stats(db: Client, round_no: int) -> WeeklyAnnouncement | None:
     """
     해당 회차 추첨 결과로 사용자 번호 등수 일괄 계산 후 공지 저장
 
@@ -49,62 +49,72 @@ def calculate_and_save_stats(db: Session, round_no: int) -> WeeklyAnnouncement |
     -------
     WeeklyAnnouncement or None (추첨 결과 미존재 시)
     """
-    draw = db.query(DrawResult).filter(DrawResult.round == round_no).first()
-    if not draw:
+    draw_rows = db.table("draw_results").select("*").eq("round", round_no).execute().data
+    if not draw_rows:
         logger.warning(f"[stats] {round_no}회차 추첨 결과 없음")
         return None
 
+    draw = DrawResult.from_dict(draw_rows[0])
     winning = [draw.n1, draw.n2, draw.n3, draw.n4, draw.n5, draw.n6]
     bonus   = draw.bonus
 
     # 아직 등수 미계산인 추출 번호만 처리
     extractions = (
-        db.query(UserExtraction)
-        .filter(
-            UserExtraction.target_round == round_no,
-            UserExtraction.rank.is_(None),
-        )
-        .all()
+        db.table("user_extractions")
+        .select("*")
+        .eq("target_round", round_no)
+        .is_("rank", "null")
+        .execute()
+        .data
     )
 
     rank_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     for ext in extractions:
-        rank, match, b_match   = calculate_rank(ext.numbers, winning, bonus)
-        ext.rank               = rank
-        ext.match_count        = match
-        ext.bonus_match        = b_match
-        rank_counts[rank]     += 1
+        rank, match, b_match = calculate_rank(ext["numbers"], winning, bonus)
+        db.table("user_extractions").update({
+            "rank":        rank,
+            "match_count": match,
+            "bonus_match": b_match,
+        }).eq("id", ext["id"]).execute()
+        rank_counts[rank] += 1
 
-    db.commit()
-
-    stats = {
-        RANK_LABELS[r]: rank_counts[r] for r in range(1, 7)
-    }
+    stats = {RANK_LABELS[r]: rank_counts[r] for r in range(1, 7)}
     stats["total"] = len(extractions)
+
+    now_iso = datetime.utcnow().isoformat()
 
     # 이미 공지 있으면 업데이트
     existing = (
-        db.query(WeeklyAnnouncement)
-        .filter(WeeklyAnnouncement.round == round_no)
-        .first()
+        db.table("weekly_announcements")
+        .select("*")
+        .eq("round", round_no)
+        .execute()
+        .data
     )
     if existing:
-        existing.stats             = stats
-        existing.total_extractions = len(extractions)
-        existing.published_at      = datetime.utcnow()
-        db.commit()
+        db.table("weekly_announcements").update({
+            "stats":             stats,
+            "total_extractions": len(extractions),
+            "published_at":      now_iso,
+        }).eq("round", round_no).execute()
+        updated = (
+            db.table("weekly_announcements")
+            .select("*")
+            .eq("round", round_no)
+            .execute()
+            .data[0]
+        )
         logger.info(f"[stats] {round_no}회차 공지 업데이트: {stats}")
-        return existing
+        return WeeklyAnnouncement.from_dict(updated)
 
-    ann = WeeklyAnnouncement(
-        round             = round_no,
-        draw_date         = draw.draw_date,
-        winning_numbers   = {"numbers": winning, "bonus": bonus},
-        stats             = stats,
-        total_extractions = len(extractions),
-    )
-    db.add(ann)
-    db.commit()
-    db.refresh(ann)
+    row = {
+        "round":             round_no,
+        "draw_date":         draw.draw_date.isoformat(),
+        "winning_numbers":   {"numbers": winning, "bonus": bonus},
+        "stats":             stats,
+        "total_extractions": len(extractions),
+        "published_at":      now_iso,
+    }
+    inserted = db.table("weekly_announcements").insert(row).execute().data[0]
     logger.info(f"[stats] {round_no}회차 공지 생성: {stats}")
-    return ann
+    return WeeklyAnnouncement.from_dict(inserted)
