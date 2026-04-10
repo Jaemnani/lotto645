@@ -3,3 +3,4 @@
 activate
 .env
 __pycache__/
+.venv
