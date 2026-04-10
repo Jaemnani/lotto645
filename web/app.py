@@ -15,9 +15,8 @@ from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from .database import DrawResult, UserExtraction, WeeklyAnnouncement, get_db, init_db
+from .database import get_supabase
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
 from .number_gen import generate_numbers
 from .scheduler import create_scheduler
@@ -35,14 +34,11 @@ app = FastAPI(title="로또 번호 추출기", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # 프론트엔드 도메인으로 교체 권장
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
 )
-
-# DB 테이블 생성
-init_db()
 
 # 스케줄러 시작
 _scheduler = create_scheduler()
@@ -96,7 +92,6 @@ class ExtractResponse(BaseModel):
 def extract(
     req: ExtractRequest,
     response: Response,
-    db: Session = Depends(get_db),
     session_id: Optional[str] = Cookie(default=None),
 ):
     """번호 생성 (save=true 시 DB 저장)"""
@@ -115,15 +110,14 @@ def extract(
 
     saved = False
     if req.save:
-        ext = UserExtraction(
-            session_id   = session_id,
-            target_round = target_round,
-            ball_set     = result["ball_set"],
-            strategy     = result["strategy"],
-            numbers      = result["numbers"],
-        )
-        db.add(ext)
-        db.commit()
+        db = get_supabase()
+        db.table("user_extractions").insert({
+            "session_id":   session_id,
+            "target_round": target_round,
+            "ball_set":     result["ball_set"],
+            "strategy":     result["strategy"],
+            "numbers":      result["numbers"],
+        }).execute()
         saved = True
         logger.info(f"[api] 번호 저장: {result['numbers']} ({target_round}회차)")
 
@@ -138,72 +132,90 @@ def extract(
 
 # ── API: 추첨 결과 ─────────────────────────────────────────────────────────────
 @app.get("/api/draw/latest")
-def latest_draw(db: Session = Depends(get_db)):
-    """가장 최근 저장된 추첨 결과"""
-    draw = db.query(DrawResult).order_by(DrawResult.round.desc()).first()
-    if not draw:
+def latest_draw():
+    """가장 최근 저장된 추첨 결과 (실제 당첨번호)"""
+    db   = get_supabase()
+    rows = (
+        db.table("draw_results")
+        .select("*")
+        .eq("is_winning", True)
+        .order("round", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
         return {"round": None, "message": "추첨 결과 없음"}
+    draw = rows[0]
     return {
-        "round":    draw.round,
-        "draw_date": str(draw.draw_date),
-        "numbers":  [draw.n1, draw.n2, draw.n3, draw.n4, draw.n5, draw.n6],
-        "bonus":    draw.bonus,
+        "round":     draw["round"],
+        "draw_date": draw["draw_date"],
+        "numbers":   [draw["n1"], draw["n2"], draw["n3"], draw["n4"], draw["n5"], draw["n6"]],
+        "bonus":     draw["bonus"],
+        "ball_set":  draw.get("ball_set"),
     }
 
 
 # ── API: 공지사항 ──────────────────────────────────────────────────────────────
 @app.get("/api/announcement/latest")
-def latest_announcement(db: Session = Depends(get_db)):
+def latest_announcement():
     """최신 주간 통계 공지"""
-    ann = db.query(WeeklyAnnouncement).order_by(WeeklyAnnouncement.round.desc()).first()
-    if not ann:
+    db   = get_supabase()
+    rows = (
+        db.table("weekly_announcements")
+        .select("*")
+        .order("round", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
         return {"round": None, "message": "아직 공지사항이 없습니다"}
-    return _ann_to_dict(ann)
+    return rows[0]
 
 
 @app.get("/api/announcement/{round_no}")
-def announcement_by_round(round_no: int, db: Session = Depends(get_db)):
+def announcement_by_round(round_no: int):
     """특정 회차 공지"""
-    ann = db.query(WeeklyAnnouncement).filter(WeeklyAnnouncement.round == round_no).first()
-    if not ann:
+    db   = get_supabase()
+    rows = (
+        db.table("weekly_announcements")
+        .select("*")
+        .eq("round", round_no)
+        .execute()
+        .data
+    )
+    if not rows:
         raise HTTPException(404, f"{round_no}회차 공지사항 없음")
-    return _ann_to_dict(ann)
+    return rows[0]
 
 
 @app.get("/api/announcements")
-def announcements_list(limit: int = 10, db: Session = Depends(get_db)):
+def announcements_list(limit: int = 10):
     """최근 공지 목록"""
-    anns = (
-        db.query(WeeklyAnnouncement)
-        .order_by(WeeklyAnnouncement.round.desc())
+    db   = get_supabase()
+    rows = (
+        db.table("weekly_announcements")
+        .select("*")
+        .order("round", desc=True)
         .limit(min(limit, 50))
-        .all()
+        .execute()
+        .data
     )
-    return [_ann_to_dict(a) for a in anns]
-
-
-def _ann_to_dict(ann: WeeklyAnnouncement) -> dict:
-    return {
-        "round":             ann.round,
-        "draw_date":         str(ann.draw_date),
-        "winning_numbers":   ann.winning_numbers,
-        "stats":             ann.stats,
-        "total_extractions": ann.total_extractions,
-        "published_at":      ann.published_at.isoformat(),
-    }
+    return rows
 
 
 # ── API: 관리자 ────────────────────────────────────────────────────────────────
 @app.post("/api/admin/fetch-and-calc")
 def admin_fetch_and_calc(
     round_no: Optional[int] = None,
-    db: Session = Depends(get_db),
     _: None = Depends(_require_admin),
 ):
     """
     추첨 결과 수집 + 통계 계산 (관리자 전용)
     round_no 미지정 시 최신 회차 자동 조회
     """
+    db     = get_supabase()
     target = round_no if round_no else get_latest_round()
     data   = fetch_draw(target)
     if not data:

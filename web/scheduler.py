@@ -8,7 +8,7 @@ import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from .database import SessionLocal
+from .database import get_supabase
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
 from .stats import calculate_and_save_stats
 
@@ -24,8 +24,8 @@ def saturday_job():
     3. 사용자 번호 등수 계산 + 공지 생성
     """
     logger.info("[scheduler] 토요일 통계 작업 시작")
-    db = SessionLocal()
     try:
+        db     = get_supabase()
         latest = get_latest_round()
         data   = fetch_draw(latest)
 
@@ -43,8 +43,6 @@ def saturday_job():
 
     except Exception:
         logger.exception("[scheduler] 오류 발생")
-    finally:
-        db.close()
 
 
 def create_scheduler() -> BackgroundScheduler:
@@ -56,7 +54,7 @@ def create_scheduler() -> BackgroundScheduler:
         CronTrigger(day_of_week="sat", hour=21, minute=5, timezone=KST),
         id="saturday_stats",
         replace_existing=True,
-        misfire_grace_time=3600,  # 1시간 내 놓친 실행 허용
+        misfire_grace_time=3600,
     )
 
     logger.info("[scheduler] 토요일 21:05 KST 스케줄 등록 완료")
