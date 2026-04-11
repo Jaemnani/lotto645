@@ -30,7 +30,7 @@ ssh -i ~/.ssh/YOUR_KEY.key ubuntu@YOUR_SERVER_IP
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3-pip python3-venv git iptables-persistent
+sudo apt install -y python3-pip python3-venv git iptables-persistent nginx
 ```
 
 ### 2. 프로젝트 클론
@@ -133,19 +133,57 @@ journalctl -u lotto645 -f         # 실시간 로그
 
 ---
 
+## nginx 리버스 프록시
+
+80포트로 접속 시 8000포트(FastAPI)로 자동 연결.
+
+```bash
+sudo tee /etc/nginx/sites-available/lotto645 << 'EOF'
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+sudo ln -s /etc/nginx/sites-available/lotto645 /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl enable nginx
+sudo systemctl start nginx
+```
+
+### nginx 관리 명령어
+
+```bash
+sudo systemctl restart nginx
+sudo nginx -t                  # 설정 문법 검사
+```
+
+---
+
 ## 방화벽 설정
 
 ### Oracle Cloud 보안 목록
 
 네트워킹 → 가상 클라우드 네트워크 → lotto645-vcn → 보안 목록 → Default Security List → 수신 규칙 추가
 
-- 소스 CIDR: `0.0.0.0/0`
-- IP 프로토콜: TCP
-- 대상 포트 범위: `8000`
+| 소스 CIDR | 프로토콜 | 포트 | 용도 |
+|-----------|---------|------|------|
+| 0.0.0.0/0 | TCP | 22 | SSH |
+| 0.0.0.0/0 | TCP | 80 | HTTP (nginx) |
+| 0.0.0.0/0 | TCP | 8000 | FastAPI 직접 접근 |
 
 ### Ubuntu iptables
 
 ```bash
+sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT
 sudo netfilter-persistent save   # 재부팅 후에도 유지
 ```
@@ -196,6 +234,8 @@ sudo systemctl restart lotto645
 | 번호 저장 (user_extractions) | ✅ 동작 확인 |
 | 토요일 21:05 자동 통계 스케줄러 | ✅ 등록 완료 |
 | 공지사항 팝업 | ✅ 배포 완료 (추첨 후 동작 예정) |
+| nginx 리버스 프록시 (80→8000) | ✅ 동작 확인 |
+| 페이지 타이틀 / OG 태그 | ✅ 설정 완료 |
 
 ---
 
@@ -211,5 +251,6 @@ sudo systemctl restart lotto645
 ## 접속 주소
 
 ```
-http://140.245.65.47:8000
+http://YOUR_SERVER_IP        # nginx 경유 (80포트)
+http://YOUR_SERVER_IP:8000   # FastAPI 직접
 ```
