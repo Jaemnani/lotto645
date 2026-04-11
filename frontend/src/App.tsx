@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import ExtractPanel from './components/ExtractPanel'
 import AnnouncementPanel from './components/AnnouncementPanel'
+import AnnouncementPopup from './components/AnnouncementPopup'
 import { api } from './api'
 import './index.css'
 
@@ -17,6 +18,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background">
+      <AnnouncementPopup />
       {/* 헤더 */}
       <header className="border-b bg-card sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
