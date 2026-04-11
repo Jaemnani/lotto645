@@ -13,3 +13,5 @@ requests==2.32.3
 torch
 numpy==1.26.4
 pandas
+
+supabase
