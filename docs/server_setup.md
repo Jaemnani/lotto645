@@ -7,7 +7,7 @@
 | 서비스 | Oracle Cloud Free Tier |
 | 인스턴스 | VM.Standard.E2.1.Micro |
 | OS | Ubuntu 24.04 |
-| 공인 IP | 140.245.65.47 |
+| 공인 IP | YOUR_SERVER_IP |
 | 사용자 | ubuntu |
 | 지역 | ap-chuncheon-1 |
 | RAM | 1GB / CPU 1코어 |
@@ -19,7 +19,7 @@
 
 ```bash
 chmod 600 ~/.ssh/oracle-ssh-key-2026-04-09.key
-ssh -i ~/.ssh/oracle-ssh-key-2026-04-09.key ubuntu@140.245.65.47
+ssh -i ~/.ssh/YOUR_KEY.key ubuntu@YOUR_SERVER_IP
 ```
 
 ---
@@ -63,9 +63,9 @@ pip install supabase
 
 ```bash
 cat > .env << 'EOF'
-SUPABASE_URL=https://ytspwwbbhkceexogvhkz.supabase.co
-SUPABASE_KEY=eyJ...   # Supabase anon public key
-ADMIN_KEY=5c767349c1a12e6cabc10ce3dda301bd4c8c0a8197ffa11d1c17590f1b098c2e
+SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
+SUPABASE_KEY=YOUR_SUPABASE_ANON_KEY
+ADMIN_KEY=YOUR_ADMIN_KEY   # openssl rand -hex 32 으로 생성
 HOST=0.0.0.0
 PORT=8000
 EOF
@@ -77,13 +77,13 @@ gitignore 대상 파일이므로 scp로 직접 복사:
 
 ```bash
 # 로컬 맥에서 실행
-scp -i ~/.ssh/oracle-ssh-key-2026-04-09.key \
-  /Users/ohyeahdani_m1/workspace/lotto645/model_m02_claude/best_m02.pth \
-  ubuntu@140.245.65.47:~/workspace/lotto645/model_m02_claude/
+scp -i ~/.ssh/YOUR_KEY.key \
+  /path/to/lotto645/model_m02_claude/best_m02.pth \
+  ubuntu@YOUR_SERVER_IP:~/workspace/lotto645/model_m02_claude/
 
-scp -i ~/.ssh/oracle-ssh-key-2026-04-09.key \
-  /Users/ohyeahdani_m1/workspace/lotto645/data/history_from_cafe.csv \
-  ubuntu@140.245.65.47:~/workspace/lotto645/data/
+scp -i ~/.ssh/YOUR_KEY.key \
+  /path/to/lotto645/data/history_from_cafe.csv \
+  ubuntu@YOUR_SERVER_IP:~/workspace/lotto645/data/
 ```
 
 ---
