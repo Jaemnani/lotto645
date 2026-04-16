@@ -19,11 +19,9 @@ pipeline.py — 매주 금요일 자동 실행 파이프라인
 단독 실행:
   python pipeline.py
 
-크론 등록 (매주 금요일 오전 10시 KST):
-  crontab -e 에 아래 줄 추가:
-  0 1 * * 5 cd /Users/jeremyye/workspace/lotto645 && \
-            /Users/jeremyye/workspace/venv/venv_default/bin/python pipeline.py \
-            >> pipeline_log.txt 2>&1
+LaunchAgent 등록 (매주 금요일 오전 10시 KST):
+  ~/Library/LaunchAgents/com.lotto645.pipeline.plist 참고
+  launchctl load ~/Library/LaunchAgents/com.lotto645.pipeline.plist
 """
 
 import os

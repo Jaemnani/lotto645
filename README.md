@@ -16,7 +16,7 @@ lotto645/
 ├── scripts/           # Supabase 동기화 스크립트
 ├── supabase/          # DB 마이그레이션 SQL
 ├── web/               # FastAPI 백엔드
-├── cron.sh            # 주간 크롤링 실행 스크립트
+├── cron.sh            # 주간 크롤링 실행 스크립트 (deprecated, LaunchAgent 사용)
 └── run_web.py         # 서버 실행 엔트리포인트
 ```
 
@@ -31,7 +31,7 @@ lotto645/
 | DB | Supabase (PostgreSQL) |
 | 모델 | PyTorch LSTM |
 | 서버 | Oracle Cloud Free Tier (Ubuntu 24.04) |
-| 스케줄러 | APScheduler (서버), crontab (로컬) |
+| 스케줄러 | APScheduler (서버), launchd LaunchAgent (로컬 macOS) |
 
 ---
 
@@ -71,20 +71,30 @@ lotto645/
 
 ## 자동화 흐름
 
-### 매주 금요일 11:00 — 카페 크롤링 (로컬)
+### 매주 금요일 10:00 — 파이프라인 자동 실행 (로컬 macOS)
 
 ```
-cron.sh 실행
-  → crawling/01_dh_caffe_crawling_with_auto_login.py
-    → 네이버 카페에서 추첨 데이터 크롤링
-    → data/history_from_cafe.csv 저장
-    → scripts/sync_cafe_history.py 자동 호출
-      → Supabase draw_results 동기화
+LaunchAgent 실행 (com.lotto645.pipeline)
+  → pipeline.py
+    1. 크롤링: 네이버 카페에서 추첨 데이터 크롤링 → data/history_from_cafe.csv
+    2. 학습: 모델 재학습 → best_m02.pth
+    3. 예측: 공세트 1~5 최고 조합 추출
+    4. 구매: 동행복권 자동 구매
 ```
 
-로컬 crontab 등록:
-```
-0 11 * * 5 /path/to/lotto645/cron.sh
+LaunchAgent 등록 (`~/Library/LaunchAgents/com.lotto645.pipeline.plist`):
+```bash
+# 등록
+launchctl load ~/Library/LaunchAgents/com.lotto645.pipeline.plist
+
+# 확인
+launchctl list | grep lotto645
+
+# 즉시 테스트
+launchctl start com.lotto645.pipeline
+
+# 해제
+launchctl unload ~/Library/LaunchAgents/com.lotto645.pipeline.plist
 ```
 
 ### 매주 토요일 21:05 — 추첨 결과 처리 (서버)

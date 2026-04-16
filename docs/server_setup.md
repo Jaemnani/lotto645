@@ -243,7 +243,7 @@ sudo systemctl restart lotto645
 
 | 시점 | 동작 | 방식 |
 |------|------|------|
-| 매주 금요일 11:00 | 카페 크롤링 + Supabase 동기화 | 로컬 crontab (아이맥/맥미니) |
+| 매주 금요일 10:00 | 파이프라인 (크롤링→학습→예측→구매) | 로컬 macOS LaunchAgent |
 | 매주 토요일 21:05 | 추첨 결과 fetch + 통계 계산 | 서버 내 APScheduler |
 
 ---

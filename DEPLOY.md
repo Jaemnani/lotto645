@@ -106,10 +106,58 @@ sudo certbot --nginx -d YOUR_DOMAIN
 ```
 
 ### 모델 자동 동기화 (매주 월요일)
+
+Oracle 서버(Ubuntu)에서는 crontab 사용:
 ```bash
 crontab -e
 # 추가:
 0 2 * * 1 /home/ubuntu/lotto645/sync_model.sh >> /var/log/lotto_sync.log 2>&1
+```
+
+### 파이프라인 자동 실행 (매주 금요일, 로컬 macOS)
+
+`~/Library/LaunchAgents/com.lotto645.pipeline.plist` 파일 생성:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lotto645.pipeline</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ohyeahdani_m1/workspace/venv_common/bin/python</string>
+        <string>/Users/ohyeahdani_m1/workspace/lotto645/pipeline.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/ohyeahdani_m1/workspace/lotto645</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>5</integer>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/ohyeahdani_m1/workspace/lotto645/logs/pipeline_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ohyeahdani_m1/workspace/lotto645/logs/pipeline_stderr.log</string>
+</dict>
+</plist>
+```
+
+```bash
+mkdir -p ~/workspace/lotto645/logs
+launchctl load ~/Library/LaunchAgents/com.lotto645.pipeline.plist
+launchctl list | grep lotto645   # 등록 확인
 ```
 
 ---
