@@ -1,0 +1,59 @@
+{
+  "predicted_at": "2026-04-18T17:31:13.505224+09:00",
+  "model": "m03_bayesian_frequency",
+  "round_range": [
+    835,
+    1219
+  ],
+  "config": {
+    "pool_mode": "threshold",
+    "ratio": 1.0,
+    "top": 15,
+    "mode": "sample",
+    "samples": 1,
+    "seed": 42,
+    "alpha": 1.0
+  },
+  "tickets": {
+    "ball_set_1": [
+      6,
+      17,
+      28,
+      33,
+      37,
+      45
+    ],
+    "ball_set_2": [
+      9,
+      22,
+      24,
+      30,
+      36,
+      44
+    ],
+    "ball_set_3": [
+      3,
+      26,
+      29,
+      31,
+      33,
+      36
+    ],
+    "ball_set_4": [
+      11,
+      15,
+      19,
+      31,
+      38,
+      45
+    ],
+    "ball_set_5": [
+      6,
+      12,
+      18,
+      35,
+      38,
+      45
+    ]
+  }
+}
