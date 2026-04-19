@@ -16,7 +16,7 @@ lotto645/
 ├── scripts/           # Supabase 동기화 스크립트
 ├── supabase/          # DB 마이그레이션 SQL
 ├── web/               # FastAPI 백엔드
-├── cron.sh            # 주간 크롤링 실행 스크립트 (deprecated, LaunchAgent 사용)
+├── cron.sh            # 아이맥 매일 크롤링 스크립트 (LaunchAgent 에서 호출)
 └── run_web.py         # 서버 실행 엔트리포인트
 ```
 
@@ -31,7 +31,7 @@ lotto645/
 | DB | Supabase (PostgreSQL) |
 | 모델 | PyTorch LSTM |
 | 서버 | Oracle Cloud Free Tier (Ubuntu 24.04) |
-| 스케줄러 | APScheduler (서버), launchd LaunchAgent (로컬 macOS) |
+| 스케줄러 | APScheduler (서버, 매시간 재학습 + 토요일 통계), launchd LaunchAgent (아이맥, 매일 크롤링 + 금요일 구매) |
 
 ---
 
@@ -71,40 +71,44 @@ lotto645/
 
 ## 자동화 흐름
 
-### 매주 금요일 10:00 — 파이프라인 자동 실행 (로컬 macOS)
+### 스케줄 요약
 
-```
-LaunchAgent 실행 (com.lotto645.pipeline)
-  → pipeline.py
-    1. 크롤링: 네이버 카페에서 추첨 데이터 크롤링 → data/history_from_cafe.csv
-    2. 학습: 모델 재학습 → best_m02.pth
-    3. 예측: 공세트 1~5 최고 조합 추출
-    4. 구매: 동행복권 자동 구매
-```
+| 시점 | 동작 | 실행 주체 |
+|------|------|-----------|
+| 매일 11:00 KST | 네이버 카페 크롤링 → Supabase 동기화 | 아이맥 LaunchAgent (`com.lotto645.daily-crawl`) |
+| 매시간 정각 | DB 신규 회차 감지 시 m03 재학습 + 메모리 리로드 | 서버 APScheduler (`hourly_retrain_check`) |
+| 매주 토요일 21:05 KST | 당첨번호 fetch + 사용자 등수 계산 + 주간 공지 생성 | 서버 APScheduler (`saturday_job`) |
+| 매주 금요일 10:00 KST | 파이프라인 (크롤링→학습→예측→구매) | 아이맥 LaunchAgent (`com.lotto645.friday-buy`) |
+| FastAPI 기동 시 | 30초 후 모델 자동 로드 (없거나 오래됐으면 재학습) | 서버 APScheduler |
 
-LaunchAgent 등록 (`~/Library/LaunchAgents/com.lotto645.pipeline.plist`):
+### 아이맥 LaunchAgent 등록
+
 ```bash
-# 등록
-launchctl load ~/Library/LaunchAgents/com.lotto645.pipeline.plist
-
-# 확인
-launchctl list | grep lotto645
-
-# 즉시 테스트
-launchctl start com.lotto645.pipeline
-
-# 해제
-launchctl unload ~/Library/LaunchAgents/com.lotto645.pipeline.plist
+bash ~/workspace/lotto645/setup_launchagent.sh
+launchctl list | grep lotto645   # 등록 확인
 ```
 
-### 매주 토요일 21:05 — 추첨 결과 처리 (서버)
+### 서버 재학습 흐름
 
 ```
-APScheduler 자동 실행
-  → 동행복권 공홈에서 최신 회차 결과 fetch
-  → draw_results 저장 (is_winning=True)
-  → user_extractions 등수 일괄 계산
-  → weekly_announcements 생성/업데이트
+아이맥: cron.sh → 카페 크롤링 → scripts/sync_cafe_history.py → Supabase draw_results
+    ↓
+서버 매시간 정각: Supabase.max(round) > 현재 모델.round_range[1] ?
+    └─ YES → retrain() 호출
+              └─ Supabase fetch → BayesianFrequencyModel.fit() → .npz 원자적 교체
+              └─ number_gen.reload_model() → 메모리 싱글턴 교체
+              └─ 사용자가 즉시 최신 모델 기반 번호 수령
+```
+
+### 관리자 API
+
+```bash
+# 현재 모델 정보 (학습 회차, 로드 시각, 마지막 재학습 결과)
+curl http://YOUR_SERVER_IP/api/model/info
+
+# 수동 재학습 트리거
+curl -X POST http://YOUR_SERVER_IP/api/admin/retrain \
+  -H "X-Admin-Key: $ADMIN_KEY"
 ```
 
 ---

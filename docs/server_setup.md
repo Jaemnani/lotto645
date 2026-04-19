@@ -228,11 +228,14 @@ sudo systemctl restart lotto645
 
 | 기능 | 상태 |
 |------|------|
-| FastAPI 백엔드 | ✅ 실행 중 (systemd) |
-| LSTM 모델 번호 추출 | ✅ 동작 확인 |
+| FastAPI 백엔드 | ✅ 실행 중 (systemd, Restart=always) |
+| m03 베이지안 빈도 모델 번호 추출 | ✅ 동작 확인 |
 | Supabase DB 연결 | ✅ 동작 확인 |
 | 번호 저장 (user_extractions) | ✅ 동작 확인 |
+| 매시간 정각 자동 재학습 (신규 회차 감지 시) | ✅ 등록 완료 |
+| 기동 30초 후 초기 학습 트리거 | ✅ 등록 완료 |
 | 토요일 21:05 자동 통계 스케줄러 | ✅ 등록 완료 |
+| 관리자 API (/api/model/info, /api/admin/retrain) | ✅ 배포 |
 | 공지사항 팝업 | ✅ 배포 완료 (추첨 후 동작 예정) |
 | nginx 리버스 프록시 (80→8000) | ✅ 동작 확인 |
 | 페이지 타이틀 / OG 태그 | ✅ 설정 완료 |
@@ -243,8 +246,29 @@ sudo systemctl restart lotto645
 
 | 시점 | 동작 | 방식 |
 |------|------|------|
-| 매주 금요일 10:00 | 파이프라인 (크롤링→학습→예측→구매) | 로컬 macOS LaunchAgent |
-| 매주 토요일 21:05 | 추첨 결과 fetch + 통계 계산 | 서버 내 APScheduler |
+| 매일 11:00 KST | 네이버 카페 크롤링 + Supabase 동기화 | 아이맥 LaunchAgent (`com.lotto645.daily-crawl`) |
+| 매시간 정각 | DB 신규 회차 감지 시 m03 재학습 + 메모리 리로드 | 서버 APScheduler (`hourly_retrain_check`) |
+| FastAPI 기동 시 | 30초 후 초기 학습 + 놓친 회차 캐치업 | 서버 APScheduler (`startup_retrain`) |
+| 매주 토요일 21:05 KST | 당첨번호 fetch + 등수 계산 + 공지 생성 | 서버 APScheduler (`saturday_job`) |
+| 매주 금요일 10:00 KST | pipeline.py (구매 포함) | 아이맥 LaunchAgent (`com.lotto645.friday-buy`) |
+
+### 재학습 트리거 조건
+
+`hourly_retrain_check`:
+- Supabase `draw_results` 중 `is_winning=true` 이고 `ball_set IS NOT NULL` 인 최대 회차가
+  현재 모델의 `round_range[1]` 보다 크면 재학습.
+- 즉, 아이맥 크롤링으로 공세트 정보까지 채워진 시점에 동작.
+
+### 모델 관련 API
+
+```bash
+curl http://YOUR_SERVER_IP/api/model/info | python3 -m json.tool
+# loaded, round_range, num_draws_per_set, loaded_at, last_retrain
+
+curl -X POST http://YOUR_SERVER_IP/api/admin/retrain \
+  -H "X-Admin-Key: $ADMIN_KEY"
+# 수동 재학습 트리거, 동시 실행 방지 lock 적용
+```
 
 ---
 
