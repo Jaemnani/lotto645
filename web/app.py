@@ -58,19 +58,7 @@ def _require_admin(x_admin_key: Optional[str] = Header(default=None)):
         raise HTTPException(403, "관리자 키 불일치")
 
 
-# ── SPA 서빙 ───────────────────────────────────────────────────────────────────
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
-
-
-@app.get("/", include_in_schema=False)
-@app.get("/{full_path:path}", include_in_schema=False)
-def serve_spa(full_path: str = ""):
-    index = os.path.join(STATIC_DIR, "index.html")
-    if full_path.startswith("api/") or full_path.startswith("admin/"):
-        raise HTTPException(404)
-    if os.path.isfile(index):
-        return FileResponse(index)
-    return JSONResponse({"message": "API 서버 정상 동작 중"})
 
 
 # ── 스키마 ─────────────────────────────────────────────────────────────────────
@@ -258,3 +246,15 @@ def admin_fetch_and_calc(
         "bonus":   draw.bonus,
         "stats":   ann.stats if ann else None,
     }
+
+
+# ── SPA 서빙 (반드시 맨 아래 — catchall 이 API 경로를 가로채지 않도록) ────────────
+@app.get("/", include_in_schema=False)
+@app.get("/{full_path:path}", include_in_schema=False)
+def serve_spa(full_path: str = ""):
+    index = os.path.join(STATIC_DIR, "index.html")
+    if full_path.startswith("api/") or full_path.startswith("admin/"):
+        raise HTTPException(404)
+    if os.path.isfile(index):
+        return FileResponse(index)
+    return JSONResponse({"message": "API 서버 정상 동작 중"})
