@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-04-18T08:09:30Z",
+  "trained_at": "2026-04-19T01:15:46Z",
   "from_round": null,
   "include_mock": false,
   "include_bonus": false,
@@ -15,5 +15,6 @@
   "round_range": [
     835,
     1219
-  ]
+  ],
+  "triggered_by": "final_smoke"
 }

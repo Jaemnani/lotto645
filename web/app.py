@@ -18,7 +18,8 @@ from pydantic import BaseModel
 
 from .database import get_supabase
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
-from .number_gen import generate_numbers
+from .number_gen import generate_numbers, get_model_info
+from .retrain import get_last_result as get_last_retrain_result, retrain
 from .scheduler import create_scheduler
 from .stats import calculate_and_save_stats
 
@@ -205,7 +206,34 @@ def announcements_list(limit: int = 10):
     return rows
 
 
+# ── API: 모델 정보 ─────────────────────────────────────────────────────────────
+@app.get("/api/model/info")
+def model_info():
+    """현재 서빙 중인 m03 모델의 학습 회차 / 로드 시각 / 마지막 재학습 결과"""
+    info = get_model_info()
+    info["last_retrain"] = get_last_retrain_result()
+    return info
+
+
 # ── API: 관리자 ────────────────────────────────────────────────────────────────
+@app.post("/api/admin/retrain")
+def admin_retrain(
+    from_round: Optional[int] = None,
+    include_mock: bool = False,
+    include_bonus: bool = False,
+    alpha: float = 1.0,
+    _: None = Depends(_require_admin),
+):
+    """수동 재학습 트리거 (관리자 전용)"""
+    return retrain(
+        from_round=from_round,
+        include_mock=include_mock,
+        include_bonus=include_bonus,
+        alpha=alpha,
+        triggered_by="admin_api",
+    )
+
+
 @app.post("/api/admin/fetch-and-calc")
 def admin_fetch_and_calc(
     round_no: Optional[int] = None,

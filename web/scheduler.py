@@ -1,5 +1,8 @@
 """
-APScheduler - 토요일 21:05 KST 자동 추첨 결과 수집 + 통계 계산
+APScheduler
+  - 토요일 21:05 KST : 추첨 결과 수집 + 통계 계산 (saturday_job)
+  - 매 시간 정각     : Supabase 신규 회차 폴링 → 있으면 m03 재학습 (hourly_retrain_check)
+  - 기동 시 1회      : 모델 파일 없거나 최신 회차와 차이나면 즉시 재학습
 """
 
 import logging
@@ -7,13 +10,59 @@ import logging
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from datetime import datetime, timedelta
 
 from .database import get_supabase
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
+from .retrain import retrain
 from .stats import calculate_and_save_stats
 
 logger = logging.getLogger(__name__)
 KST = pytz.timezone("Asia/Seoul")
+
+
+def _latest_round_in_db() -> int | None:
+    sb = get_supabase()
+    rows = (
+        sb.table("draw_results")
+        .select("round")
+        .eq("is_winning", True)
+        .not_.is_("ball_set", "null")   # ball_set 까지 채워진 것만 학습 대상
+        .order("round", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return int(rows[0]["round"]) if rows else None
+
+
+def hourly_retrain_check():
+    """매 시간 정각: DB 최신 회차가 현재 모델보다 크면 재학습"""
+    from .number_gen import get_model_info
+
+    try:
+        info = get_model_info()
+        db_latest = _latest_round_in_db()
+        if db_latest is None:
+            logger.info("[scheduler] DB 에 학습 가능한 회차 없음")
+            return
+
+        if not info.get("loaded"):
+            logger.info("[scheduler] 모델 미로드 상태 - 초기 학습 트리거")
+            retrain(triggered_by="scheduler_initial")
+            return
+
+        model_latest = info["round_range"][1]
+        if db_latest > model_latest:
+            logger.info(
+                f"[scheduler] 신규 회차 감지  {model_latest} → {db_latest}, 재학습 시작"
+            )
+            retrain(triggered_by="scheduler_hourly")
+        else:
+            logger.debug(f"[scheduler] 신규 데이터 없음 (모델={model_latest}, DB={db_latest})")
+    except Exception:
+        logger.exception("[scheduler] 시간당 체크 오류")
 
 
 def saturday_job():
@@ -57,5 +106,23 @@ def create_scheduler() -> BackgroundScheduler:
         misfire_grace_time=3600,
     )
 
-    logger.info("[scheduler] 토요일 21:05 KST 스케줄 등록 완료")
+    # 매 시간 정각 - 신규 회차 감지 시 재학습
+    scheduler.add_job(
+        hourly_retrain_check,
+        CronTrigger(minute=0, timezone=KST),
+        id="hourly_retrain",
+        replace_existing=True,
+        misfire_grace_time=1800,
+        max_instances=1,
+    )
+
+    # 기동 후 30초 뒤 1회 (모델 없을 시 초기 학습 + 놓친 회차 캐치업)
+    scheduler.add_job(
+        hourly_retrain_check,
+        DateTrigger(run_date=datetime.now(KST) + timedelta(seconds=30)),
+        id="startup_retrain",
+        replace_existing=True,
+    )
+
+    logger.info("[scheduler] saturday 21:05 + hourly retrain + startup 등록 완료")
     return scheduler
