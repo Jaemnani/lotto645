@@ -1,6 +1,26 @@
 # lotto645
 
-LSTM 모델 기반 로또 6/45 번호 추출 서비스
+## Tagline-ko
+공 세트별 베이지안 빈도 통계로 로또 6/45 번호를 추천하는 서비스. 매시간 최신 회차로 모델을 재학습하고 응모 결과 등수까지 자동 집계합니다.
+
+## Tagline-en
+Korean Lotto 6/45 number recommender using per-ball-set Bayesian frequency statistics, retrained hourly on the latest draws with automatic rank scoring.
+
+## Tagline-ja
+ボールセット別ベイズ頻度統計でロト6/45の番号を提案するサービス。毎時最新回でモデルを再学習し、応募結果の等数まで自動集計します。
+
+## 프로젝트 개요
+한국 로또 6/45 번호를 추천하는 풀스택 서비스입니다.
+
+- **무엇** — 응모 회차와 추출 전략을 고르면 6개 번호 조합을 추천하고, 추첨 후 실제 당첨번호와 대조해 등수를 자동 계산합니다. 매주 토요일 추첨 후에는 주간 통계 공지를 생성합니다.
+- **왜** — 물리적 공의 질량·마모 편차로 특정 번호가 장기적으로 편향 출현한다는 가설에서 출발합니다. LSTM 같은 시계열 학습 대신, 공 세트(1~5)별 독립 빈도 통계에 베이지안 평활(Laplace)을 더해 번호별 사후 출현 확률을 추정합니다.
+- **어떻게** — 아이맥이 매일 네이버 카페에서 회차별 공 세트 정보를 크롤링해 Supabase 에 동기화하고, 오라클 클라우드의 FastAPI 서버가 매시간 신규 회차를 감지해 모델(`BayesianFrequencyModel`)을 재학습합니다. 추천은 확률 상위·가중 랜덤·구간 균형·Cold 번호 포함 4가지 전략을 제공합니다. 프론트엔드는 React + Vite, DB 는 Supabase(PostgreSQL) 입니다.
+
+## Summary-en
+A full-stack recommender for the Korean Lotto 6/45. Users pick a target draw and an extraction strategy to get a six-number set, and after the draw each entry is automatically scored against the official winning numbers. Instead of sequence models like LSTM, it starts from the hypothesis that physical ball mass/wear causes a long-run appearance bias, estimating each number's posterior appearance probability from per-ball-set (1–5) frequency counts with Bayesian (Laplace) smoothing. An iMac crawls per-draw ball-set data daily into Supabase; a FastAPI server on Oracle Cloud detects new draws every hour and retrains the `BayesianFrequencyModel`. Four strategies are offered: top-probability, weighted-random, range-balanced, and cold-number inclusion. Frontend is React + Vite, DB is Supabase (PostgreSQL).
+
+## Summary-ja
+韓国ロト6/45の番号を提案するフルスタックサービスです。応募回と抽出戦略を選ぶと6個の番号セットを提案し、抽選後は公式当選番号と照合して等数を自動計算します。LSTMのような時系列モデルではなく、物理的なボールの質量・摩耗による長期的な出現の偏りという仮説から出発し、ボールセット別(1〜5)の頻度統計にベイズ(ラプラス)平滑化を加えて各番号の事後出現確率を推定します。iMacが毎日ナバーカフェからボールセット情報をクロールしてSupabaseに同期し、Oracle CloudのFastAPIサーバーが毎時新しい回を検知して`BayesianFrequencyModel`を再学習します。確率上位・加重ランダム・区間均衡・コールド番号包含の4つの戦略を提供します。フロントエンドはReact + Vite、DBはSupabase(PostgreSQL)です。
 
 ---
 
@@ -12,7 +32,8 @@ lotto645/
 ├── data/              # 추첨 히스토리 CSV
 ├── docs/              # 서버 세팅 문서
 ├── frontend/          # React 프론트엔드 (Vite + Tailwind)
-├── model_m02_claude/  # LSTM 모델 및 학습 코드
+├── model_m02_claude/  # LSTM 모델 (실험)
+├── model_m03_claude/  # 베이지안 빈도 모델 (운영)
 ├── scripts/           # Supabase 동기화 스크립트
 ├── supabase/          # DB 마이그레이션 SQL
 ├── web/               # FastAPI 백엔드
@@ -29,7 +50,7 @@ lotto645/
 | 백엔드 | FastAPI, Python 3.12 |
 | 프론트엔드 | React, TypeScript, Vite, Tailwind CSS |
 | DB | Supabase (PostgreSQL) |
-| 모델 | PyTorch LSTM |
+| 모델 | Bayesian Frequency Model (운영) · PyTorch LSTM (실험) |
 | 서버 | Oracle Cloud Free Tier (Ubuntu 24.04) |
 | 스케줄러 | APScheduler (서버, 매시간 재학습 + 토요일 통계), launchd LaunchAgent (아이맥, 매일 크롤링 + 금요일 구매) |
 
