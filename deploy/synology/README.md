@@ -11,7 +11,7 @@
 | 띄우는 컨테이너 | `web` | `web` + `db`(Postgres) + `rest`(PostgREST) + `proxy`(Caddy) |
 | DB | 클라우드 Supabase (오라클과 공유) | NAS 안 Postgres (완전 독립) |
 | `SUPABASE_URL` | `https://xxx.supabase.co` | `http://proxy` |
-| 외부 노출 | DSM 역프록시 443 → `<NAS_IP>:8000` | DSM 역프록시 443 → `<NAS_IP>:8080`(Caddy) |
+| 외부 노출 | DSM 역프록시 443 → `<NAS_IP>:${WEB_PORT}`(기본 8645) | DSM 역프록시 443 → `<NAS_IP>:${PROXY_PORT}`(기본 8646, Caddy) |
 | 실행 | `docker compose up -d --build` | `docker compose --profile selfhost up -d --build` |
 | 추천 | **오라클과 같은 DB 그대로 쓰며 web 만 NAS 이중화** | **오라클/Supabase 의존 끊고 NAS 단독 운영** |
 
@@ -48,7 +48,7 @@ SUPABASE_KEY=YOUR_ANON_KEY
 ```bash
 sudo docker compose up -d --build
 sudo docker compose ps
-curl -s http://localhost:8000/health     # {"status":"ok"}
+curl -s http://localhost:8645/health     # {"status":"ok"}  (WEB_PORT 기본 8645)
 ```
 끝. 오라클과 **같은 Supabase DB** 를 바라보므로 데이터/스케줄러가 그대로 동작한다.
 (두 서버가 동시에 토요일 잡을 돌리면 중복 알림이 올 수 있다 — 아래 "이중화 주의" 참고.)
@@ -88,9 +88,9 @@ sudo docker compose logs -f db | grep -m1 "database system is ready"
 ```bash
 docker exec -it lotto645-db psql -U postgres -c "\du"     # anon/authenticated/service_role/authenticator
 docker exec -it lotto645-db psql -U postgres -c "\dt"     # draw_results 등 3테이블
-curl -s http://localhost:8080/health                      # Caddy 200
+curl -s http://localhost:8646/health                      # Caddy 200  (PROXY_PORT 기본 8646)
 curl -s -H "Authorization: Bearer $SUPABASE_KEY" \
-  "http://localhost:8080/rest/v1/draw_results?select=round&limit=1"   # [] 또는 데이터(정상)
+  "http://localhost:8646/rest/v1/draw_results?select=round&limit=1"   # [] 또는 데이터(정상)
 ```
 > 401 = ANON_KEY ↔ JWT_SECRET 불일치 · 404 = 마이그레이션 미적용. (docs/02 트러블슈팅 표)
 
@@ -109,10 +109,10 @@ docker exec -it lotto645-db psql -U postgres -c "NOTIFY pgrst,'reload schema'"
 1. **인증서**: 제어판 → 보안 → 인증서 → Let's Encrypt (`<DOMAIN>` + 이메일).
 2. **역방향 프록시**: 제어판 → 로그인 포털 → 고급 → 역방향 프록시 → 생성
    - 소스: HTTPS / `<DOMAIN>` / 443
-   - 대상: HTTP / `localhost` / **8000**(모드 A) 또는 **8080**(모드 B, Caddy)
+   - 대상: HTTP / `localhost` / **8645**(모드 A, WEB_PORT) 또는 **8646**(모드 B, PROXY_PORT/Caddy)
 3. **포트포워딩**: 라우터 443 → `<NAS_IP>:443`. (또는 Cloudflare Tunnel 로 포트포워딩 생략)
 
-> 내부 포트(8000/8080)는 LAN 전용. 공개는 역프록시(443) 경로로만.
+> 내부 포트(8645/8646)는 LAN 전용. 공개는 역프록시(443) 경로로만.
 
 ---
 
