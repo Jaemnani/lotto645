@@ -1,0 +1,13 @@
+# Synology 컨테이너 이미지 전용 (웹 서빙 = m03 베이지안, torch 불필요 → 슬림)
+# 학습/구매 파이프라인(torch, selenium 등)은 컨테이너가 아니라 크롤러 머신(아이맥)에서 돈다.
+python-dotenv==1.1.0
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+apscheduler==3.10.4
+pytz==2025.1
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+supabase
+numpy==1.26.4
+pandas

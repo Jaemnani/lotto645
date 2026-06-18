@@ -16,6 +16,13 @@ PYTHON=/Users/jeremyye/workspace/venv/venv_default/bin/python
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_FILE="$ROOT_DIR/data/history_from_cafe.csv"
 
+# ── Discord 알림 + 로그 캡처 (DISCORD_WEBHOOK_URL 없으면 자동 no-op) ──────────────
+mkdir -p "$ROOT_DIR/logs"
+LOG="$ROOT_DIR/logs/mac_crawl_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG") 2>&1
+NOTIFY_ROOT="$ROOT_DIR" NOTIFY_PYTHON="$PYTHON" source "$ROOT_DIR/scripts/notify.sh"
+notify_start "맥 크롤링+push" "$LOG"
+
 echo "========================================"
 echo " Mac Mini 크롤링 시작"
 echo " $(date '+%Y-%m-%d %H:%M:%S')"
@@ -42,6 +49,7 @@ else
     git push origin master
 
     echo "push 완료 → GitHub Actions 자동 실행 예정"
+    discord_send "🆕 **[맥 크롤링]** 신규 데이터 감지 → 제${LATEST_ROUND}회 push 완료 · GitHub Actions 실행 예정"
 fi
 
 echo ""

@@ -1,0 +1,19 @@
+# Caddy — self-host 모드 단일 진입점 (docs/06-infra-deployment.md)
+# DDNS 가 서브도메인을 못 만들 때 단일 호스트 + 경로로 분기한다.
+# 설정 변경 후에는 반드시 컨테이너 recreate 해야 반영됨:
+#   sudo docker compose --profile selfhost up -d --force-recreate proxy
+
+:80 {
+	# supabase-py / supabase-js 가 ${SUPABASE_URL}/rest/v1/* 로 호출 → PostgREST 로
+	handle_path /rest/v1/* {
+		reverse_proxy rest:3000
+	}
+
+	# 헬스체크 (역프록시 살아있는지 200 확인)
+	respond /health 200
+
+	# 그 외 전부 FastAPI 웹앱 (SPA + /api/*)
+	handle {
+		reverse_proxy web:8000
+	}
+}

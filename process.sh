@@ -16,6 +16,13 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODEL_DIR="$ROOT_DIR/model_m02_claude"
 CRAWL_SCRIPT="$ROOT_DIR/crawling/01_dh_caffe_crawling_with_auto_login.py"
 
+# ── Discord 알림 + 로그 캡처 (DISCORD_WEBHOOK_URL 없으면 자동 no-op) ──────────────
+mkdir -p "$ROOT_DIR/logs"
+LOG="$ROOT_DIR/logs/process_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG") 2>&1          # 화면 출력 유지 + 로그 파일에도 적재(digest 소스)
+NOTIFY_ROOT="$ROOT_DIR" NOTIFY_PYTHON="$PYTHON" source "$ROOT_DIR/scripts/notify.sh"
+notify_start "파이프라인(process)" "$LOG"   # 시작 알림 + EXIT trap(종료 요약)
+
 # ── 인자 파싱 ─────────────────────────────────────────────────────────────────
 SKIP_CRAWL=0
 SKIP_TRAIN=0

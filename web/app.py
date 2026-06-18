@@ -248,6 +248,12 @@ def admin_fetch_and_calc(
     }
 
 
+# ── 헬스체크 (컨테이너 healthcheck / 역프록시 확인용) ─────────────────────────────
+@app.get("/health", include_in_schema=False)
+def health():
+    return {"status": "ok"}
+
+
 # ── SPA 서빙 (반드시 맨 아래 — catchall 이 API 경로를 가로채지 않도록) ────────────
 @app.get("/", include_in_schema=False)
 @app.get("/{full_path:path}", include_in_schema=False)

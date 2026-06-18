@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 
 from .database import get_supabase
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
+from .notify import notify_event
 from .retrain import retrain
 from .stats import calculate_and_save_stats
 
@@ -58,11 +59,13 @@ def hourly_retrain_check():
             logger.info(
                 f"[scheduler] 신규 회차 감지  {model_latest} → {db_latest}, 재학습 시작"
             )
+            notify_event("🔁", "신규 회차 감지 → 재학습", f"{model_latest} → {db_latest}회")
             retrain(triggered_by="scheduler_hourly")
         else:
             logger.debug(f"[scheduler] 신규 데이터 없음 (모델={model_latest}, DB={db_latest})")
-    except Exception:
+    except Exception as e:
         logger.exception("[scheduler] 시간당 체크 오류")
+        notify_event("❌", "시간당 재학습 체크 오류", str(e))
 
 
 def saturday_job():
@@ -73,6 +76,7 @@ def saturday_job():
     3. 사용자 번호 등수 계산 + 공지 생성
     """
     logger.info("[scheduler] 토요일 통계 작업 시작")
+    notify_event("▶️", "토요일 통계 작업 시작", "당첨번호 fetch + 등수 계산")
     try:
         db     = get_supabase()
         latest = get_latest_round()
@@ -80,6 +84,7 @@ def saturday_job():
 
         if not data:
             logger.warning(f"[scheduler] {latest}회차 결과 아직 미발표 - 재시도 필요")
+            notify_event("⚠️", "토요일 통계 보류", f"{latest}회차 결과 미발표 — 재시도 필요")
             return
 
         save_draw_result(db, data)
@@ -87,11 +92,14 @@ def saturday_job():
 
         if ann:
             logger.info(f"[scheduler] {latest}회차 완료 | 통계: {ann.stats}")
+            notify_event("✅", f"{latest}회차 통계 완료", str(ann.stats))
         else:
             logger.info(f"[scheduler] {latest}회차 추첨 저장 완료 (추출자 없음)")
+            notify_event("✅", f"{latest}회차 추첨 저장 완료", "추출자 없음")
 
-    except Exception:
+    except Exception as e:
         logger.exception("[scheduler] 오류 발생")
+        notify_event("❌", "토요일 통계 작업 실패", str(e))
 
 
 def create_scheduler() -> BackgroundScheduler:

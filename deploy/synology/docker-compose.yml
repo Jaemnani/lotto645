@@ -1,0 +1,97 @@
+# Synology Container Manager / Docker Compose — lotto645
+# =====================================================
+# 두 가지 모드 (docs/02-backend.md, docs/06-infra-deployment.md):
+#
+#  (A) managed Supabase 모드 (기본, 가장 단순)
+#      - web 컨테이너 1개만 띄우고 .env 의 SUPABASE_URL 을 클라우드 Supabase 로.
+#      - 실행:  sudo docker compose up -d --build
+#      - 외부 노출:  DSM 역방향 프록시 443 → <NAS_IP>:8000
+#
+#  (B) self-host 모드 (오라클/Supabase 독립 — DB 까지 NAS 에서)
+#      - db(Postgres) + rest(PostgREST) + proxy(Caddy) + web 전부.
+#      - .env 에서 SUPABASE_URL=http://proxy  (Caddy 가 /rest/v1/* → PostgREST 로 라우팅)
+#      - 실행:  sudo docker compose --profile selfhost up -d --build
+#      - 외부 노출:  DSM 역방향 프록시 443 → <NAS_IP>:8080 (Caddy)
+#
+# 자세한 절차는 deploy/synology/README.md 참고.
+
+name: lotto645
+
+services:
+  # ── FastAPI 웹 서버 (항상 실행) ──────────────────────────────────────────────
+  web:
+    build:
+      context: ../..                      # repo 루트
+      dockerfile: deploy/synology/Dockerfile
+    image: lotto645-web:latest
+    container_name: lotto645-web
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"                       # managed 모드 직접 노출 / selfhost 모드는 Caddy 경유
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── (selfhost) Postgres ─────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: lotto645-db
+    profiles: ["selfhost"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}   # selfhost 모드 필수 (.env 에 설정)
+      POSTGRES_DB: postgres
+      AUTHENTICATOR_PASSWORD: ${AUTHENTICATOR_PASSWORD:-}
+      TZ: Asia/Seoul
+    volumes:
+      - ./volumes/db/data:/var/lib/postgresql/data
+      # 최초 init 시 (DB 디렉토리가 비어있을 때만) 알파벳 순으로 1회 실행
+      - ./db/00_roles.sh:/docker-entrypoint-initdb.d/00_roles.sh:ro
+      - ../../supabase/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/10_001_schema.sql:ro
+      - ../../supabase/migrations/002_add_rehearsal_to_draw_results.sql:/docker-entrypoint-initdb.d/10_002.sql:ro
+      - ../../supabase/migrations/003_fix_round_unique_constraint.sql:/docker-entrypoint-initdb.d/10_003.sql:ro
+      - ./db/90_rls.sql:/docker-entrypoint-initdb.d/90_rls.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── (selfhost) PostgREST — Postgres 를 REST 로 노출 (Supabase 핵심) ──────────
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: lotto645-rest
+    profiles: ["selfhost"]
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:-}   # selfhost 모드 필수 (.env 에 설정)
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── (selfhost) Caddy — 단일 진입점, 경로 라우팅 ──────────────────────────────
+  #   /rest/v1/*  → PostgREST (supabase-js/py 가 ${URL}/rest/v1/* 호출)
+  #   그 외       → FastAPI 웹앱 (SPA + /api/*)
+  proxy:
+    image: caddy:2-alpine
+    container_name: lotto645-proxy
+    profiles: ["selfhost"]
+    restart: unless-stopped
+    ports:
+      - "8080:80"                         # DSM 역방향 프록시 443 → 여기로
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./volumes/caddy/data:/data
+      - ./volumes/caddy/config:/config
+    depends_on:
+      - web
+      - rest

@@ -1,0 +1,21 @@
+# Synology web 이미지 빌드 컨텍스트 슬림화 (deploy/synology/Dockerfile 은 web/·model_m03_claude/ 만 COPY)
+.git
+.github
+__pycache__/
+**/__pycache__/
+.venv
+venv
+*.pyc
+logs/
+frontend/node_modules
+frontend
+deploy/synology/volumes
+*.dump
+.env
+# 학습/구매 파이프라인 자산 (컨테이너 서빙엔 불필요)
+model_m02_claude
+purchase
+crawling
+data
+*.pth
+*.pkl

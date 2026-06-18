@@ -8,6 +8,10 @@ LOG="$ROOT/logs/crawl_$(date +\%Y\%m\%d).log"
 
 mkdir -p "$ROOT/logs"
 
+# Discord 알림 (DISCORD_WEBHOOK_URL 없으면 자동 no-op)
+NOTIFY_ROOT="$ROOT" NOTIFY_PYTHON="$PYTHON" source "$ROOT/scripts/notify.sh"
+notify_start "매일 크롤링" "$LOG"   # 시작 알림 + EXIT trap(종료 요약)
+
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') 크롤링 시작 =====" >> "$LOG"
 
 cd "$ROOT"

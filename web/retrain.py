@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytz
 
+from .notify import notify_event as _notify
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "model_m03_claude"))
 
@@ -113,6 +115,11 @@ def retrain(
             f"[retrain] 완료  {result['duration_seconds']:.2f}s  "
             f"회차 {model.round_range[0]}~{model.round_range[1]}"
         )
+        _notify(
+            "✅", "재학습 완료",
+            f"회차 {model.round_range[0]}~{model.round_range[1]} · "
+            f"{result['duration_seconds']:.1f}s · trigger={triggered_by}",
+        )
 
     except Exception as e:
         logger.exception("[retrain] 실패")
@@ -121,6 +128,7 @@ def retrain(
             "error": str(e),
             "finished_at": datetime.now(KST).isoformat(),
         })
+        _notify("❌", "재학습 실패", f"{e} · trigger={triggered_by}")
     finally:
         _last_result = result
         _retrain_lock.release()
