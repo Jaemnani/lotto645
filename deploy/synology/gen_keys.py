@@ -12,6 +12,8 @@ JWT 를 만든다. 표준 라이브러리만 사용 (PyJWT 불필요).
 출력된 ANON_KEY → web 의 SUPABASE_KEY, SERVICE_KEY → 적재용 SUPABASE_SERVICE_KEY.
 """
 
+from __future__ import annotations   # NAS 의 구버전 Python(3.8/3.9)에서도 `str | None` 동작
+
 import base64
 import hashlib
 import hmac
