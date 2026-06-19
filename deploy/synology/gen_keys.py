@@ -18,6 +18,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -46,7 +47,11 @@ def _load_secret_from_env() -> str | None:
     for line in env.read_text().splitlines():
         line = line.strip()
         if line.startswith("JWT_SECRET="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
+            val = line.split("=", 1)[1]
+            # docker compose 와 동일하게 인라인 주석( 공백+# ) 제거 → PGRST_JWT_SECRET 과 일치 보장.
+            # (base64 시크릿엔 공백/# 가 없어 안전.) 불일치 시 PostgREST 401 JWSInvalidSignature.
+            val = re.sub(r"\s+#.*$", "", val)
+            return val.strip().strip('"').strip("'")
     return None
 
 

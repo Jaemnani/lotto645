@@ -65,6 +65,7 @@ gen_secret() {  # gen_secret <KEY> <생성명령>
     local key="$1" cmd="$2" cur
     cur="$(get_kv "$key")"
     if [ -n "$cur" ] && [ "$FORCE" -eq 0 ]; then
+        set_kv "$key" "$cur"   # 값은 유지하되 인라인 주석/여백 제거(정규화) → compose/gen_keys 와 일치
         echo "[=] $key 보존 (기존 값 유지)"
         return
     fi
