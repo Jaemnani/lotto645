@@ -13,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
 
-from .database import get_supabase
+from .database import get_supabase, get_supabase_admin
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
 from .notify import notify_event
 from .retrain import retrain
@@ -78,7 +78,7 @@ def saturday_job():
     logger.info("[scheduler] 토요일 통계 작업 시작")
     notify_event("▶️", "토요일 통계 작업 시작", "당첨번호 fetch + 등수 계산")
     try:
-        db     = get_supabase()
+        db     = get_supabase_admin()   # draw_results/announcements 쓰기 → service 키 필요
         latest = get_latest_round()
         data   = fetch_draw(latest)
 

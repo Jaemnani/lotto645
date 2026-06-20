@@ -26,7 +26,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
-from web.database import get_supabase
+from web.database import get_supabase_admin
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def sync(last: int | None = None):
     rounds = df["round"].unique()
     logger.info(f"CSV: {len(rounds)}개 회차, {len(df)}행 ({min(rounds)} ~ {max(rounds)})")
 
-    db = get_supabase()
+    db = get_supabase_admin()   # draw_results 쓰기 → service 키 (self-host RLS)
 
     # ── DB에서 현재 상태 조회: (round, is_winning) 조합 ──────────────
     existing = db.table("draw_results").select("round, is_winning, ball_set").execute().data

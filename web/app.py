@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .database import get_supabase
+from .database import get_supabase, get_supabase_admin
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
 from .number_gen import generate_numbers, get_model_info
 from .retrain import get_last_result as get_last_retrain_result, retrain
@@ -231,7 +231,7 @@ def admin_fetch_and_calc(
     추첨 결과 수집 + 통계 계산 (관리자 전용)
     round_no 미지정 시 최신 회차 자동 조회
     """
-    db     = get_supabase()
+    db     = get_supabase_admin()   # draw_results/announcements 쓰기 → service 키 필요
     target = round_no if round_no else get_latest_round()
     data   = fetch_draw(target)
     if not data:

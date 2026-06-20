@@ -12,15 +12,30 @@ from supabase import create_client, Client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+# 쓰기(적재/통계)용. self-host RLS 에선 draw_results/weekly_announcements 쓰기에 service_role 필요.
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 _client: Optional[Client] = None
+_admin_client: Optional[Client] = None
 
 
 def get_supabase() -> Client:
+    """읽기/공개 작업용 (anon 키). RLS public read + user_extractions anon insert."""
     global _client
     if _client is None:
         _client = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _client
+
+
+def get_supabase_admin() -> Client:
+    """쓰기/관리용 (service 키). SUPABASE_SERVICE_KEY 우선, 없으면 anon 키로 폴백.
+    self-host: draw_results/weekly_announcements 쓰기·user_extractions 등수 업데이트에 필요.
+    managed Supabase(키 하나로 운영하던 환경)는 SERVICE 키 미설정 시 기존대로 동작."""
+    global _admin_client
+    if _admin_client is None:
+        key = SUPABASE_SERVICE_KEY or SUPABASE_KEY
+        _admin_client = create_client(SUPABASE_URL, key)
+    return _admin_client
 
 
 # FastAPI Depends 호환 이름
