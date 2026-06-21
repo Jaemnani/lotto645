@@ -11,7 +11,7 @@
 | 띄우는 컨테이너 | `web` | `web` + `db`(Postgres) + `rest`(PostgREST) + `proxy`(Caddy) |
 | DB | 클라우드 Supabase (오라클과 공유) | NAS 안 Postgres (완전 독립) |
 | `SUPABASE_URL` | `https://xxx.supabase.co` | `http://proxy` |
-| 외부 노출 | DSM 역프록시 443 → `<NAS_IP>:${WEB_PORT}`(기본 8645) | DSM 역프록시 443 → `<NAS_IP>:${PROXY_PORT}`(기본 8646, Caddy) |
+| 외부 노출 | DSM 역프록시 443 → `<NAS_IP>:${WEB_PORT}`(8645, web) | DSM 역프록시 443 → `<NAS_IP>:${WEB_PORT}`(8645, web). 8646=LAN 전용 |
 | 실행 | `docker compose up -d --build` | `docker compose --profile selfhost up -d --build` |
 | 추천 | **오라클과 같은 DB 그대로 쓰며 web 만 NAS 이중화** | **오라클/Supabase 의존 끊고 NAS 단독 운영** |
 
@@ -106,13 +106,20 @@ docker exec -it lotto645-db psql -U postgres -c "NOTIFY pgrst,'reload schema'"
 
 ## 외부 노출 (DSM)
 
+DSM 역방향 프록시는 **하나의 443을 호스트명으로 구분**해 여러 서비스로 라우팅한다(443이 이미
+다른 서비스에 쓰여도 호스트명만 다르면 추가 가능).
+
 1. **인증서**: 제어판 → 보안 → 인증서 → Let's Encrypt (`<DOMAIN>` + 이메일).
 2. **역방향 프록시**: 제어판 → 로그인 포털 → 고급 → 역방향 프록시 → 생성
    - 소스: HTTPS / `<DOMAIN>` / 443
-   - 대상: HTTP / `localhost` / **8645**(모드 A, WEB_PORT) 또는 **8646**(모드 B, PROXY_PORT/Caddy)
-3. **포트포워딩**: 라우터 443 → `<NAS_IP>:443`. (또는 Cloudflare Tunnel 로 포트포워딩 생략)
+   - 대상: HTTP / `localhost` / **8645 (web, WEB_PORT)** — 모드 A·B 모두 web 으로.
+3. **인증서 매핑**: 보안 → 인증서 → 설정에서 이 서비스에 위 인증서 지정.
+4. **포트포워딩**: 라우터 443 → `<NAS_IP>:443`. (또는 Cloudflare Tunnel 로 포트포워딩 생략)
 
-> 내부 포트(8645/8646)는 LAN 전용. 공개는 역프록시(443) 경로로만.
+> ⚠️ **외부엔 web(8645)만 노출.** 이 프로젝트는 브라우저가 `/api/*`+SPA 만 호출하고 `/rest/v1`
+> (PostgREST)은 web 컨테이너가 내부(`http://proxy`)에서만 쓴다. Caddy(8646)를 외부에 열면
+> PostgREST 가 공개돼 anon 키 유출 시 `user_extractions`(PII)까지 읽힐 수 있다.
+> **8646(Caddy)은 LAN 전용** — 아이맥 크롤러가 `http://<NAS_IP>:8646/rest/v1` 로 적재할 때만 사용.
 
 ---
 
