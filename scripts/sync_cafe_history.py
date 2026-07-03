@@ -2,14 +2,14 @@
 카페 크롤링 CSV → Supabase draw_results 동기화
 
 CSV 컬럼: ball_set, round, draw_date, n1~n6, bonus,
-          winners_1~5, total_prize_1~5, total_sales
+          winners_1~5, total_prize_1~5, total_sales, prize_1~5
 회차당 2행: 첫 번째 행 = 모의추첨(is_winning=false), 두 번째 행 = 실제 당첨(is_winning=true)
-winners_*/total_prize_*/total_sales는 실제 당첨 행에서만 채워짐(공홈 API 출처, 모의추첨 행은 빈 값).
+winners_*/total_prize_*/total_sales/prize_*는 실제 당첨 행에서만 채워짐(공홈 API 출처, 모의추첨 행은 빈 값).
 
 동작:
   - DB에 없는 (round, is_winning) 조합 → INSERT
   - DB에 있지만 ball_set이 NULL인 행 → UPDATE ball_set만 채움
-  - DB에 있지만 등수별 상세(winners_*/total_prize_*/total_sales)가 NULL이고
+  - DB에 있지만 등수별 상세(winners_*/total_prize_*/total_sales/prize_*)가 NULL이고
     CSV엔 값이 있는 행 → UPDATE로 채움
 
 사용법:
@@ -41,6 +41,7 @@ DETAIL_FIELDS = [
     "winners_1", "winners_2", "winners_3", "winners_4", "winners_5",
     "total_prize_1", "total_prize_2", "total_prize_3", "total_prize_4", "total_prize_5",
     "total_sales",
+    "prize_1", "prize_2", "prize_3", "prize_4", "prize_5",
 ]
 
 

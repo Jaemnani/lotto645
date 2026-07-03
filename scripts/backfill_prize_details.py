@@ -1,5 +1,5 @@
 """
-draw_results 등수별 상세(winners_1~5/total_prize_1~5/total_sales) 백필
+draw_results 등수별 상세(winners_1~5/total_prize_1~5/total_sales/prize_1~5) 백필
 
 기존 회차(is_winning=true 행)는 이 컬럼들이 없던 시절에 적재되어 NULL 상태다.
 동행복권 공홈 API(selectPstLt645InfoNew.do, srchDir=center)는 한 번 호출에 최대
@@ -34,6 +34,7 @@ DETAIL_FIELDS = [
     "winners_1", "winners_2", "winners_3", "winners_4", "winners_5",
     "total_prize_1", "total_prize_2", "total_prize_3", "total_prize_4", "total_prize_5",
     "total_sales",
+    "prize_1", "prize_2", "prize_3", "prize_4", "prize_5",
 ]
 
 REQUEST_DELAY = 0.5     # 회차 조회 사이 대기 (예의상 최소 간격)

@@ -47,10 +47,12 @@ HISTORY_PATH = os.path.join(os.path.dirname(__file__), "../data/history_from_caf
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyADvPITzZOpRZF7Sgm_Fo2Mkm9-pgEdeIs")  # https://aistudio.google.com/apikey 에서 발급
 
 # 공홈 API(등수별 상세) 컬럼 — scripts/sync_cafe_history.py의 DETAIL_FIELDS와 순서 동일해야 함
+# 뒤에 추가할 땐 여기 끝에 이어붙일 것 (마이그레이션이 컬럼 수 차이만큼 뒤에서부터 채움)
 DETAIL_COLUMNS = [
     "winners_1", "winners_2", "winners_3", "winners_4", "winners_5",
     "total_prize_1", "total_prize_2", "total_prize_3", "total_prize_4", "total_prize_5",
     "total_sales",
+    "prize_1", "prize_2", "prize_3", "prize_4", "prize_5",
 ]
 
 # ─────────────────────────────────────────────
@@ -140,8 +142,10 @@ def migrate_csv_add_date(history_path: str):
 
 def migrate_csv_add_prize_details(history_path: str):
     """
-    구버전 CSV(21컬럼 미만)에 등수별 상세(winners_1~5, total_prize_1~5, total_sales
-    = 11컬럼) 빈 칸 추가. 이미 21컬럼 이상이면 아무것도 하지 않음.
+    구버전 CSV(DETAIL_COLUMNS 전체 컬럼 수보다 적으면)에 부족한 만큼만 빈 칸 추가.
+    DETAIL_COLUMNS 뒤에 새 항목이 추가되어 목표 폭이 늘어난 경우(예: winners_*/
+    total_prize_*/total_sales만 있던 21컬럼 파일에 prize_1~5가 새로 추가된 경우)에도
+    이미 채워진 값은 그대로 두고 모자란 컬럼 수만큼만 이어붙인다.
     """
     if not os.path.exists(history_path):
         return
@@ -149,11 +153,15 @@ def migrate_csv_add_prize_details(history_path: str):
         lines = [l.strip() for l in f if l.strip()]
     if not lines:
         return
-    if len(lines[0].split(",")) >= 10 + len(DETAIL_COLUMNS):
+
+    current_cols = len(lines[0].split(","))
+    target_cols = 10 + len(DETAIL_COLUMNS)
+    if current_cols >= target_cols:
         return   # 이미 마이그레이션됨
 
-    print("[마이그레이션] 등수별 상세(당첨게임수/총당첨금/총판매금액) 컬럼 추가 중...")
-    blank = "," * len(DETAIL_COLUMNS)
+    missing = target_cols - current_cols
+    print(f"[마이그레이션] 등수별 상세 컬럼 {missing}개 추가 중...")
+    blank = "," * missing
     new_lines = [line + blank for line in lines]
     with open(history_path, "w") as f:
         f.write("\n".join(new_lines) + "\n")
