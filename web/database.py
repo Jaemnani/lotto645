@@ -64,11 +64,22 @@ class DrawResult:
     is_winning: bool = False             # False=모의추첨, True=실제 당첨번호
     id: Optional[int] = None
     ball_set: Optional[int] = None       # 카페 갱신 전 NULL
-    prize_1: Optional[int] = None        # 1등 당첨금 (원)
+    prize_1: Optional[int] = None        # 1등 당첨금 (1게임당, 원)
     prize_2: Optional[int] = None
     prize_3: Optional[int] = None
     prize_4: Optional[int] = None        # 고정 50,000
     prize_5: Optional[int] = None        # 고정 5,000
+    winners_1: Optional[int] = None      # 1등 당첨 게임 수
+    winners_2: Optional[int] = None
+    winners_3: Optional[int] = None
+    winners_4: Optional[int] = None
+    winners_5: Optional[int] = None
+    total_prize_1: Optional[int] = None  # 1등 등위별 총 당첨금 (원)
+    total_prize_2: Optional[int] = None
+    total_prize_3: Optional[int] = None
+    total_prize_4: Optional[int] = None
+    total_prize_5: Optional[int] = None
+    total_sales: Optional[int] = None    # 해당 회차 총 판매금액 (원)
     fetched_at: Optional[str] = None
 
     @classmethod
@@ -90,6 +101,17 @@ class DrawResult:
             prize_3=d.get("prize_3"),
             prize_4=d.get("prize_4"),
             prize_5=d.get("prize_5"),
+            winners_1=d.get("winners_1"),
+            winners_2=d.get("winners_2"),
+            winners_3=d.get("winners_3"),
+            winners_4=d.get("winners_4"),
+            winners_5=d.get("winners_5"),
+            total_prize_1=d.get("total_prize_1"),
+            total_prize_2=d.get("total_prize_2"),
+            total_prize_3=d.get("total_prize_3"),
+            total_prize_4=d.get("total_prize_4"),
+            total_prize_5=d.get("total_prize_5"),
+            total_sales=d.get("total_sales"),
             fetched_at=d.get("fetched_at"),
         )
 

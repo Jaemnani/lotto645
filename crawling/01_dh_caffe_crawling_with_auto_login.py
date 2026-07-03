@@ -31,6 +31,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from web.fetcher import fetch_draw  # noqa: E402  (공홈 API — 등수별 상세 조회용)
+
 # ─────────────────────────────────────────────
 # 설정
 # ─────────────────────────────────────────────
@@ -40,6 +45,13 @@ LOGIN_URL  = "https://nid.naver.com/nidlogin.login"
 COOKIE_PATH = os.path.join(os.path.dirname(__file__), "naver_cookies.pkl")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "../data/history_from_cafe.csv")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyADvPITzZOpRZF7Sgm_Fo2Mkm9-pgEdeIs")  # https://aistudio.google.com/apikey 에서 발급
+
+# 공홈 API(등수별 상세) 컬럼 — scripts/sync_cafe_history.py의 DETAIL_FIELDS와 순서 동일해야 함
+DETAIL_COLUMNS = [
+    "winners_1", "winners_2", "winners_3", "winners_4", "winners_5",
+    "total_prize_1", "total_prize_2", "total_prize_3", "total_prize_4", "total_prize_5",
+    "total_sales",
+]
 
 # ─────────────────────────────────────────────
 # 추첨일 유틸
@@ -69,9 +81,9 @@ def check_needs_update(history_path: str) -> bool:
             print("[갱신 체크] 파일이 비어 있음 → 크롤링 필요")
             return True
 
-        # 컬럼 수로 draw_date 포함 여부 판단
+        # 컬럼 수로 draw_date 포함 여부 판단 (10=구버전, 21=현재. draw_date 위치는 동일)
         cols = lines[-1].split(",")
-        if len(cols) == 10:          # ball_set, round, draw_date, n1~n6, bonus
+        if len(cols) >= 10:          # ball_set, round, draw_date, n1~n6, bonus, [등수별 상세...]
             last_date_str = cols[2].strip()
             last_draw = date.fromisoformat(last_date_str)
         elif len(cols) == 9:         # 구버전 (draw_date 없음) → 회차로 역산
@@ -122,6 +134,27 @@ def migrate_csv_add_date(history_path: str):
         new_cols  = [cols[0], cols[1], draw_date] + cols[2:]
         new_lines.append(",".join(new_cols))
 
+    with open(history_path, "w") as f:
+        f.write("\n".join(new_lines) + "\n")
+    print(f"[마이그레이션] 완료: {len(new_lines)}행 변환")
+
+def migrate_csv_add_prize_details(history_path: str):
+    """
+    구버전 CSV(21컬럼 미만)에 등수별 상세(winners_1~5, total_prize_1~5, total_sales
+    = 11컬럼) 빈 칸 추가. 이미 21컬럼 이상이면 아무것도 하지 않음.
+    """
+    if not os.path.exists(history_path):
+        return
+    with open(history_path, "r") as f:
+        lines = [l.strip() for l in f if l.strip()]
+    if not lines:
+        return
+    if len(lines[0].split(",")) >= 10 + len(DETAIL_COLUMNS):
+        return   # 이미 마이그레이션됨
+
+    print("[마이그레이션] 등수별 상세(당첨게임수/총당첨금/총판매금액) 컬럼 추가 중...")
+    blank = "," * len(DETAIL_COLUMNS)
+    new_lines = [line + blank for line in lines]
     with open(history_path, "w") as f:
         f.write("\n".join(new_lines) + "\n")
     print(f"[마이그레이션] 완료: {len(new_lines)}행 변환")
@@ -600,6 +633,26 @@ def naver_login(driver) -> bool:
 
 
 # ─────────────────────────────────────────────
+# 공홈 API — 등수별 상세(당첨게임수/총당첨금/총판매금액) 조회
+# ─────────────────────────────────────────────
+def _fetch_official_details(round_no: int) -> np.ndarray:
+    """실제 당첨 행에만 채울 등수별 상세 값. 조회 실패 시 빈 값(11개)."""
+    try:
+        data = fetch_draw(round_no)
+    except Exception as e:
+        print(f"[공홈] {round_no}회차 조회 실패: {e}")
+        data = None
+
+    if not data:
+        return np.array([""] * len(DETAIL_COLUMNS))
+
+    return np.array([
+        "" if data.get(col) is None else str(data[col])
+        for col in DETAIL_COLUMNS
+    ])
+
+
+# ─────────────────────────────────────────────
 # 메인 크롤링 로직 (원본과 동일)
 # ─────────────────────────────────────────────
 def crawl_cafe(driver, history):
@@ -730,8 +783,15 @@ def crawl_cafe(driver, history):
             continue
 
         draw_date_str = round_to_date(int(tap))
-        res_rehearsal = np.append(np.array([ballset, tap, draw_date_str]), numbers_rehearsal)
-        res_winning   = np.append(np.array([ballset, tap, draw_date_str]), numbers_winning)
+        blank_details = np.array([""] * len(DETAIL_COLUMNS))
+        official_details = _fetch_official_details(int(tap))
+
+        res_rehearsal = np.concatenate(
+            [np.array([ballset, tap, draw_date_str]), numbers_rehearsal, blank_details]
+        )
+        res_winning = np.concatenate(
+            [np.array([ballset, tap, draw_date_str]), numbers_winning, official_details]
+        )
 
         result_history.append(res_rehearsal)
         result_history.append(res_winning)
@@ -748,8 +808,9 @@ def crawl_cafe(driver, history):
 # 엔트리포인트
 # ─────────────────────────────────────────────
 def main():
-    # ── 구버전 CSV 마이그레이션 (draw_date 없으면 추가) ──────────────────────
+    # ── 구버전 CSV 마이그레이션 (draw_date 없으면 추가, 등수별 상세 없으면 추가) ──
     migrate_csv_add_date(HISTORY_PATH)
+    migrate_csv_add_prize_details(HISTORY_PATH)
 
     # ── 갱신 필요 여부 사전 체크 (브라우저 없이) ─────────────────────────────
     if not check_needs_update(HISTORY_PATH):
@@ -763,9 +824,9 @@ def main():
         raw = np.loadtxt(HISTORY_PATH, delimiter=",", dtype=str)
     else:
         print(f"[경고] 히스토리 파일 없음: {HISTORY_PATH}")
-        raw = np.array([]).reshape(0, 10)
+        raw = np.array([]).reshape(0, 10 + len(DETAIL_COLUMNS))
 
-    # crawl_cafe 에 전체 컬럼(10열)을 넘겨야 기존 행 재사용 시 shape 일치
+    # crawl_cafe 에 전체 컬럼(10 + 등수별 상세)을 넘겨야 기존 행 재사용 시 shape 일치
     history_for_crawl = raw
 
     driver = create_driver()

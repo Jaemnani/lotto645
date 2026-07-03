@@ -1,12 +1,16 @@
 """
 카페 크롤링 CSV → Supabase draw_results 동기화
 
-CSV 컬럼: ball_set, round, draw_date, n1~n6, bonus
+CSV 컬럼: ball_set, round, draw_date, n1~n6, bonus,
+          winners_1~5, total_prize_1~5, total_sales
 회차당 2행: 첫 번째 행 = 모의추첨(is_winning=false), 두 번째 행 = 실제 당첨(is_winning=true)
+winners_*/total_prize_*/total_sales는 실제 당첨 행에서만 채워짐(공홈 API 출처, 모의추첨 행은 빈 값).
 
 동작:
   - DB에 없는 (round, is_winning) 조합 → INSERT
   - DB에 있지만 ball_set이 NULL인 행 → UPDATE ball_set만 채움
+  - DB에 있지만 등수별 상세(winners_*/total_prize_*/total_sales)가 NULL이고
+    CSV엔 값이 있는 행 → UPDATE로 채움
 
 사용법:
   python scripts/sync_cafe_history.py           # 전체 동기화
@@ -33,6 +37,20 @@ logger = logging.getLogger(__name__)
 
 DATA_PATH = PROJECT_ROOT / "data/history_from_cafe.csv"
 
+DETAIL_FIELDS = [
+    "winners_1", "winners_2", "winners_3", "winners_4", "winners_5",
+    "total_prize_1", "total_prize_2", "total_prize_3", "total_prize_4", "total_prize_5",
+    "total_sales",
+]
+
+
+def _parse_int(value) -> int | None:
+    """CSV의 빈 셀(모의추첨 행)은 NaN/빈 문자열 → None."""
+    if pd.isna(value):
+        return None
+    s = str(value).strip()
+    return int(s) if s else None
+
 
 def sync(last: int | None = None):
     if not DATA_PATH.exists():
@@ -43,7 +61,7 @@ def sync(last: int | None = None):
     df = pd.read_csv(
         DATA_PATH, header=None,
         names=["ball_set", "round", "draw_date",
-               "n1", "n2", "n3", "n4", "n5", "n6", "bonus"],
+               "n1", "n2", "n3", "n4", "n5", "n6", "bonus"] + DETAIL_FIELDS,
         dtype=str,
     )
 
@@ -65,21 +83,32 @@ def sync(last: int | None = None):
     db = get_supabase_admin()   # draw_results 쓰기 → service 키 (self-host RLS)
 
     # ── DB에서 현재 상태 조회: (round, is_winning) 조합 ──────────────
-    existing = db.table("draw_results").select("round, is_winning, ball_set").execute().data
+    existing = db.table("draw_results") \
+        .select("round, is_winning, ball_set, " + ", ".join(DETAIL_FIELDS)) \
+        .execute().data
     existing_keys: set[tuple] = {(row["round"], row["is_winning"]) for row in existing}
     existing_no_ballset: set[tuple] = {
         (row["round"], row["is_winning"])
         for row in existing
         if row["ball_set"] is None
     }
+    existing_missing_details: set[tuple] = {
+        (row["round"], row["is_winning"])
+        for row in existing
+        if any(row[f] is None for f in DETAIL_FIELDS)
+    }
 
     to_insert = []
     to_update = []
+    to_update_details = []
 
     for _, row in df.iterrows():
         r = int(row["round"])
         is_winning = bool(row["is_winning"])
         key = (r, is_winning)
+
+        details = {f: _parse_int(row[f]) for f in DETAIL_FIELDS}
+        details = {f: v for f, v in details.items() if v is not None}
 
         new_row = {
             "round":      r,
@@ -89,12 +118,17 @@ def sync(last: int | None = None):
             "n1": int(row["n1"]), "n2": int(row["n2"]), "n3": int(row["n3"]),
             "n4": int(row["n4"]), "n5": int(row["n5"]), "n6": int(row["n6"]),
             "bonus":      int(row["bonus"]),
+            **details,
         }
 
         if key not in existing_keys:
             to_insert.append(new_row)
-        elif key in existing_no_ballset:
+            continue
+
+        if key in existing_no_ballset:
             to_update.append({"round": r, "is_winning": is_winning, "ball_set": int(row["ball_set"])})
+        if key in existing_missing_details and details:
+            to_update_details.append({"round": r, "is_winning": is_winning, **details})
 
     # ── INSERT ────────────────────────────────────────────────────────
     if to_insert:
@@ -117,6 +151,19 @@ def sync(last: int | None = None):
               .execute()
     else:
         logger.info("ball_set 업데이트할 행 없음")
+
+    # ── UPDATE 등수별 상세(winners_*/total_prize_*/total_sales) ───────────
+    if to_update_details:
+        logger.info(f"등수별 상세 업데이트: {len(to_update_details)}행")
+        for item in to_update_details:
+            round_no, is_winning = item.pop("round"), item.pop("is_winning")
+            db.table("draw_results") \
+              .update(item) \
+              .eq("round", round_no) \
+              .eq("is_winning", is_winning) \
+              .execute()
+    else:
+        logger.info("등수별 상세 업데이트할 행 없음")
 
     logger.info("동기화 완료.")
 
