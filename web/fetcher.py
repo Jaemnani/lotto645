@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 RESULT_PAGE_URL = "https://www.dhlottery.co.kr/lt645/result"
 ROUND_INFO_API  = "https://www.dhlottery.co.kr/lt645/selectPstLt645InfoNew.do"
-TIMEOUT   = 15
+# (connect, read) — 접속 자체가 막히는 경우 빨리 포기하고 재시도하도록 connect는 짧게
+TIMEOUT   = (5, 15)
 HEADERS   = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -35,12 +36,17 @@ HEADERS   = {
 }
 
 
-def _new_session_and_page() -> tuple[requests.Session, str]:
-    """result 페이지 방문으로 세션 쿠키 확보 (selectPstLt645InfoNew.do 호출 전 필수)."""
+def open_session() -> requests.Session:
+    """
+    result 페이지 방문으로 세션 쿠키 확보. 브라우저에서 회차 이동 버튼을 눌렀을 때
+    체감상 캐싱된 것처럼 빠른 이유는 이미 맺어둔 연결/세션을 그대로 재사용하기 때문 —
+    매 조회마다 새 세션을 열면(연결을 새로 맺으면) 느려지고 차단 확률도 올라간다.
+    여러 회차를 연달아 조회할 때는 이 세션 하나를 만들어 재사용할 것.
+    """
     session = requests.Session()
     resp = session.get(RESULT_PAGE_URL, headers=HEADERS, timeout=TIMEOUT)
     resp.raise_for_status()
-    return session, resp.text
+    return session
 
 
 def _parse_item(item: dict) -> dict:
@@ -73,12 +79,14 @@ def _parse_item(item: dict) -> dict:
     }
 
 
-def get_latest_round() -> int:
+def get_latest_round(session: requests.Session | None = None) -> int:
     """최신 회차 번호 반환. result 페이지 회차선택 드롭박스 현재값(#opt_val) 파싱.
     실패 시 날짜 계산 fallback."""
     try:
-        _, html = _new_session_and_page()
-        m = re.search(r'id="opt_val"\s+value="(\d+)"', html)
+        s = session or open_session()
+        resp = s.get(RESULT_PAGE_URL, headers=HEADERS, timeout=TIMEOUT)
+        resp.raise_for_status()
+        m = re.search(r'id="opt_val"\s+value="(\d+)"', resp.text)
         if m:
             return int(m.group(1))
         logger.warning("[fetcher] opt_val 태그 미발견")
@@ -89,11 +97,19 @@ def get_latest_round() -> int:
     return (date.today() - date(2002, 12, 7)).days // 7 + 1
 
 
-def fetch_draw(round_no: int) -> dict | None:
-    """특정 회차 추첨 결과 조회 (번호 + 등수별 당첨금)."""
+def fetch_draws_around(round_no: int, session: requests.Session | None = None) -> list[dict]:
+    """
+    srchLtEpsd=round_no 기준 center 조회 결과 전체(최대 10회차: 오래된5+선택1+최신4) 반환.
+    한 번 호출로 여러 회차를 함께 얻을 수 있어 대량 백필 시 fetch_draw보다 이걸 직접 쓰면
+    API 호출 수를 크게 줄일 수 있다.
+
+    session을 넘기면 그 연결을 재사용한다 — 브라우저에서 회차 이동 버튼을 연달아 눌렀을 때
+    체감상 캐싱된 것처럼 빠른 것과 같은 이유(연결 재사용)로, 여러 회차를 연속 조회할 때는
+    매번 새 세션을 여는 것보다 훨씬 빠르고 차단될 확률도 낮다.
+    """
     try:
-        session, _ = _new_session_and_page()
-        resp = session.get(
+        s = session or open_session()
+        resp = s.get(
             ROUND_INFO_API,
             params={"srchDir": "center", "srchLtEpsd": round_no},
             headers={**HEADERS, "X-Requested-With": "XMLHttpRequest"},
@@ -101,15 +117,19 @@ def fetch_draw(round_no: int) -> dict | None:
         )
         resp.raise_for_status()
         items = resp.json().get("data", {}).get("list") or []
-        for item in items:
-            if item.get("ltEpsd") == round_no:
-                data = _parse_item(item)
-                logger.info(f"[fetcher] {round_no}회차 조회 성공: {data['numbers']}+{data['bonus']}")
-                return data
-        logger.warning(f"[fetcher] {round_no}회차가 응답 목록에 없음")
+        return [_parse_item(item) for item in items]
     except Exception as e:
-        logger.warning(f"[fetcher] {round_no}회차 조회 실패: {e}")
+        logger.warning(f"[fetcher] {round_no}회차 주변 조회 실패: {e}")
+        return []
 
+
+def fetch_draw(round_no: int, session: requests.Session | None = None) -> dict | None:
+    """특정 회차 추첨 결과 조회 (번호 + 등수별 당첨금)."""
+    for data in fetch_draws_around(round_no, session=session):
+        if data["round"] == round_no:
+            logger.info(f"[fetcher] {round_no}회차 조회 성공: {data['numbers']}+{data['bonus']}")
+            return data
+    logger.warning(f"[fetcher] {round_no}회차가 응답 목록에 없음")
     return None
 
 
