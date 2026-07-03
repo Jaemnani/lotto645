@@ -1,10 +1,13 @@
 """
 동행복권 추첨 결과 가져오기
 
+https://www.dhlottery.co.kr/lt645/result 회차 조회 API(selectPstLt645InfoNew.do)에서
+번호 + 등수별 당첨금을 가져온다. 이 API는 result 페이지 방문으로 발급된 세션 쿠키 없이
+호출하면 연결 자체가 차단된다 (WAF).
+
 전략 (우선순위 순):
-  1. smarPage HTML 파싱 → 최신 회차 번호/날짜/번호 한 번에 취득
-  2. 공식 JSON API (특정 회차 조회용)
-  3. 날짜 계산 fallback (회차 번호만)
+  1. selectPstLt645InfoNew.do (srchDir=center) → 회차 번호/날짜/번호/등수별 당첨금 취득
+  2. 날짜 계산 fallback (get_latest_round 전용, 회차 번호만)
 """
 
 import logging
@@ -12,15 +15,14 @@ import re
 from datetime import date
 
 import requests
-from bs4 import BeautifulSoup
 from supabase import Client
 
 from .database import DrawResult
 
 logger = logging.getLogger(__name__)
 
-SMAR_URL  = "https://www.dhlottery.co.kr/smarPage"
-LOTTO_API = "https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={}"
+RESULT_PAGE_URL = "https://www.dhlottery.co.kr/lt645/result"
+ROUND_INFO_API  = "https://www.dhlottery.co.kr/lt645/selectPstLt645InfoNew.do"
 TIMEOUT   = 15
 HEADERS   = {
     "User-Agent": (
@@ -28,118 +30,85 @@ HEADERS   = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Referer": "https://www.dhlottery.co.kr/",
+    "Referer": RESULT_PAGE_URL,
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
 
 
-def _fetch_smar() -> dict | None:
-    """
-    smarPage에서 최신 회차 전체 정보 파싱.
+def _new_session_and_page() -> tuple[requests.Session, str]:
+    """result 페이지 방문으로 세션 쿠키 확보 (selectPstLt645InfoNew.do 호출 전 필수)."""
+    session = requests.Session()
+    resp = session.get(RESULT_PAGE_URL, headers=HEADERS, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return session, resp.text
 
-    HTML 구조:
-      - 회차/날짜: 텍스트에서 정규식으로 추출
-      - 번호:  div.result-ballBox 안의 div.result-ball
-                figure 태그 이전 = 주번호 6개
-                figure 태그 이후 = 보너스 1개
-    """
-    try:
-        resp = requests.get(SMAR_URL, timeout=TIMEOUT, headers=HEADERS)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
 
-        # ── 회차 번호: div.round-num ───────────────────────────────
-        # <div class="round-num">1218<span class="round-txt">회</span></div>
-        round_tag = soup.find("div", class_="round-num")
-        if not round_tag:
-            logger.warning("[fetcher] round-num 태그 미발견")
-            return None
-        round_no = int(re.sub(r"\D", "", round_tag.get_text()))
-
-        # ── 추첨일: div.today-date ─────────────────────────────────
-        # <div class="today-date">2026년 04월 04일</div>
-        date_tag = soup.find("div", class_="today-date")
-        if not date_tag:
-            logger.warning("[fetcher] today-date 태그 미발견")
-            return None
-        m = re.search(r"(\d{4})년\s*(\d{2})월\s*(\d{2})일", date_tag.get_text())
-        draw_date_str = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
-
-        # ── 번호 파싱 ──────────────────────────────────────────────
-        ball_box = soup.find("div", class_="result-ballBox")
-        if not ball_box:
-            logger.warning("[fetcher] result-ballBox 미발견")
-            return None
-
-        figure    = ball_box.find("figure")
-
-        main_balls  = []
-        bonus_balls = []
-        passed_fig  = False
-
-        for child in ball_box.children:
-            if child == figure:
-                passed_fig = True
-                continue
-            if hasattr(child, "get") and "result-ball" in child.get("class", []):
-                n = int(child.get_text(strip=True))
-                if passed_fig:
-                    bonus_balls.append(n)
-                else:
-                    main_balls.append(n)
-
-        if len(main_balls) != 6 or not bonus_balls:
-            logger.warning(f"[fetcher] 번호 파싱 이상: main={main_balls}, bonus={bonus_balls}")
-            return None
-
-        logger.info(f"[fetcher] smarPage 파싱 성공: {round_no}회 {draw_date_str} {main_balls}+{bonus_balls[0]}")
-        return {
-            "round":     round_no,
-            "draw_date": draw_date_str,
-            "numbers":   main_balls,
-            "bonus":     bonus_balls[0],
-        }
-
-    except Exception as e:
-        logger.warning(f"[fetcher] smarPage 파싱 실패: {e}")
-        return None
+def _parse_item(item: dict) -> dict:
+    ymd = str(item["ltRflYmd"])
+    return {
+        "round":     item["ltEpsd"],
+        "draw_date": f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}",
+        "numbers":   [item[f"tm{i}WnNo"] for i in range(1, 7)],
+        "bonus":     item["bnsWnNo"],
+        # 1게임당 당첨금
+        "prize_1":   item.get("rnk1WnAmt"),
+        "prize_2":   item.get("rnk2WnAmt"),
+        "prize_3":   item.get("rnk3WnAmt"),
+        "prize_4":   item.get("rnk4WnAmt"),
+        "prize_5":   item.get("rnk5WnAmt"),
+        # 등수별 당첨 게임 수
+        "winners_1": item.get("rnk1WnNope"),
+        "winners_2": item.get("rnk2WnNope"),
+        "winners_3": item.get("rnk3WnNope"),
+        "winners_4": item.get("rnk4WnNope"),
+        "winners_5": item.get("rnk5WnNope"),
+        # 등위별 총 당첨금
+        "total_prize_1": item.get("rnk1SumWnAmt"),
+        "total_prize_2": item.get("rnk2SumWnAmt"),
+        "total_prize_3": item.get("rnk3SumWnAmt"),
+        "total_prize_4": item.get("rnk4SumWnAmt"),
+        "total_prize_5": item.get("rnk5SumWnAmt"),
+        # 해당 회차 총 판매금액
+        "total_sales": item.get("rlvtEpsdSumNtslAmt"),
+    }
 
 
 def get_latest_round() -> int:
-    """최신 회차 번호 반환. smarPage 실패 시 날짜 계산 fallback."""
-    data = _fetch_smar()
-    if data and data["round"]:
-        return data["round"]
+    """최신 회차 번호 반환. result 페이지 회차선택 드롭박스 현재값(#opt_val) 파싱.
+    실패 시 날짜 계산 fallback."""
+    try:
+        _, html = _new_session_and_page()
+        m = re.search(r'id="opt_val"\s+value="(\d+)"', html)
+        if m:
+            return int(m.group(1))
+        logger.warning("[fetcher] opt_val 태그 미발견")
+    except Exception as e:
+        logger.warning(f"[fetcher] 최신 회차 조회 실패: {e}")
 
-    # fallback: 2002-12-07 첫 회차 기준 날짜 계산
     logger.warning("[fetcher] 날짜 계산으로 회차 추정")
     return (date.today() - date(2002, 12, 7)).days // 7 + 1
 
 
 def fetch_draw(round_no: int) -> dict | None:
-    """
-    특정 회차 추첨 결과 조회.
-    최신 회차면 smarPage 결과 재활용, 이전 회차면 JSON API 사용.
-    """
-    # 최신 회차는 smarPage에서 바로 가져옴
-    latest = _fetch_smar()
-    if latest and latest["round"] == round_no:
-        return latest
-
-    # 이전 회차는 JSON API
+    """특정 회차 추첨 결과 조회 (번호 + 등수별 당첨금)."""
     try:
-        resp = requests.get(LOTTO_API.format(round_no), timeout=TIMEOUT, headers=HEADERS)
+        session, _ = _new_session_and_page()
+        resp = session.get(
+            ROUND_INFO_API,
+            params={"srchDir": "center", "srchLtEpsd": round_no},
+            headers={**HEADERS, "X-Requested-With": "XMLHttpRequest"},
+            timeout=TIMEOUT,
+        )
         resp.raise_for_status()
-        data = resp.json()
-        if data.get("returnValue") == "success":
-            return {
-                "round":     data["drwNo"],
-                "draw_date": data["drwNoDate"],
-                "numbers":   [data[f"drwtNo{i}"] for i in range(1, 7)],
-                "bonus":     data["bnusNo"],
-            }
+        items = resp.json().get("data", {}).get("list") or []
+        for item in items:
+            if item.get("ltEpsd") == round_no:
+                data = _parse_item(item)
+                logger.info(f"[fetcher] {round_no}회차 조회 성공: {data['numbers']}+{data['bonus']}")
+                return data
+        logger.warning(f"[fetcher] {round_no}회차가 응답 목록에 없음")
     except Exception as e:
-        logger.warning(f"[fetcher] {round_no}회차 JSON API 실패: {e}")
+        logger.warning(f"[fetcher] {round_no}회차 조회 실패: {e}")
 
     return None
 
@@ -160,7 +129,12 @@ def save_draw_result(db: Client, data: dict) -> DrawResult:
 
     # 공홈에서 제공하는 추가 데이터 (있을 때만 포함)
     extra = {}
-    for field in ("prize_1", "prize_2", "prize_3", "prize_4", "prize_5"):
+    for field in (
+        "prize_1", "prize_2", "prize_3", "prize_4", "prize_5",
+        "winners_1", "winners_2", "winners_3", "winners_4", "winners_5",
+        "total_prize_1", "total_prize_2", "total_prize_3", "total_prize_4", "total_prize_5",
+        "total_sales",
+    ):
         if data.get(field) is not None:
             extra[field] = data[field]
 
