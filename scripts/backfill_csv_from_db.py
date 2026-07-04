@@ -45,7 +45,9 @@ def main():
         dtype=str,
         usecols=range(10),
     )
-    df["is_winning"] = df.groupby("round").cumcount() > 0
+    # 리허설 없이 1행만 있는 회차(카페 게시글 이전 구간)는 그 한 행이 실제 당첨임.
+    _round_counts = df.groupby("round")["round"].transform("count")
+    df["is_winning"] = (_round_counts == 1) | (df.groupby("round").cumcount() > 0)
 
     db = get_supabase_admin()
     rows = db.table("draw_results").select("round, is_winning, " + ", ".join(DETAIL_FIELDS)).execute().data

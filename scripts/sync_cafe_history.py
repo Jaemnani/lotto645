@@ -66,10 +66,10 @@ def sync(last: int | None = None):
         dtype=str,
     )
 
-    # 회차별로 순서 보존 후 첫 행=모의(False), 두 번째 행=실제(True) 마킹
-    df["is_winning"] = (
-        df.groupby("round").cumcount() > 0  # 0번째=False, 1번째=True
-    )
+    # 회차별로 순서 보존 후 첫 행=모의(False), 두 번째 행=실제(True) 마킹.
+    # 리허설 없이 1행만 있는 회차(카페 게시글 이전 구간)는 그 한 행이 실제 당첨임.
+    _round_counts = df.groupby("round")["round"].transform("count")
+    df["is_winning"] = (_round_counts == 1) | (df.groupby("round").cumcount() > 0)
     df = df.sort_values(["round", "is_winning"]).reset_index(drop=True)
 
     # --last 옵션: 최근 N회차
