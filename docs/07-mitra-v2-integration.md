@@ -27,6 +27,16 @@ m03(베이지안 빈도)는 그대로 두고, 같은 인터페이스(`prob: np.n
 | 라이선스 | Apache-2.0, 상업적 사용 가능 |
 | 실행 | `autogluon.tabular[mitra]` (현재 1.6.3). Python ≥3.10, torch ≥2.10 (macOS는 <2.11) |
 | 하드웨어 | GPU 강력 권장 — CPU에서 ICL 추론은 12~63배 느림, CPU fine-tune은 비현실적 |
+| 사전학습 범위 | 합성 테이블만으로 학습(실데이터 0). 컨텍스트 **최대 5,120행**, feature **최대 50개** |
+| 사전학습 prior | classical SCM, gradient-boosting, forest/tree 생성기 + 신규 **Hybrid SCM**(신경망·트리·GP·자기회귀 메커니즘을 한 인과 그래프에 결합) |
+| 공식 fine-tune 레시피 | `autogluon/mitra-finetune` (HF, pip 패키지 아님) — 8-fold bagging으로 fine-tune한 8개 자식 모델의 확률 평균, 분류 support 최대 16,384행, 256 feature 초과 시 자동 feature 선택. **GPU 전용** |
+
+실행 모드는 두 가지로 나눈다.
+
+| 모드 | 방식 | 하드웨어 | 용도 |
+|------|------|----------|------|
+| A. ICL only | 가중치 고정, 과거 표를 컨텍스트로만 넣고 예측 | CPU/MPS 가능 | **1차 백테스트, 운영 기본** |
+| B. mitra-finetune | 우리 데이터로 8개 모델 fine-tune 후 평균 | CUDA GPU (Colab/SageMaker 등) | A에서 신호가 보일 때만 |
 
 AutoGluon 1.6.3 소스 기준 확인 사항:
 
@@ -61,8 +71,12 @@ p = clf.predict_proba(X_query)[:, 1]
 
 - 타깃 `y = 1` ⇔ 번호 i가 회차 t 당첨번호 6개에 포함 (보너스는 옵션, 기본 제외 — m03와 동일)
 - 기저율 6/45 = 13.3% (불균형 크지 않음)
-- 규모: 공 세트가 있는 실제 추첨 ≈ 396회차(835~1230) × 45 = **약 17.8k행**
-  (733~834회차는 ball_set이 없어 `ball_set=0`(unknown)으로 넣거나 제외 — 백테스트로 결정)
+- 원천 데이터: 실제 추첨 498회차(733~1230), 그중 공 세트가 있는 회차 396개(835~1230, 세트별 72~92회)
+- 전부 펼치면 396 × 45 = 약 17.8k행 → v2 사전학습 컨텍스트(5,120행)를 넘는다.
+  - **컨텍스트 행 = 최근 약 110회차 × 45 ≈ 4,950행**으로 자른다.
+  - 대신 **오래된 기록은 feature 값 안에 요약**한다 (733회부터 누적한 빈도·gap 등). 행은 최근 것만, 정보는 전체를 쓰는 구조.
+  - 모드 B(fine-tune)에서는 support 16,384행까지 쓸 수 있으므로 396회차 전체를 넣는 설정도 비교한다.
+- feature는 50개 한도 안(약 20개)으로 유지한다.
 
 예측 시(다음 회차 T+1)에는 공 세트를 알 수 없으므로, 현재 UX와 똑같이 **공 세트 1~5를 가정한 query 225행**(5 × 45)을 만든다.
 출력 `p[bs, i]`는 세트별로 합이 1이 되게 정규화해서 m03 `posterior()`와 같은 스케일로 맞춘다.
@@ -86,6 +100,21 @@ prob_bs = p[bs] / p[bs].sum()      # (45,) — generate_numbers()에 그대로 �
 | 간격 | 마지막 출현 이후 회차 수(gap), 같은 세트 기준 gap | 전략 4 "Cold"의 정량화 |
 | 직전 회차 | 직전 회차 당첨 여부, 직전 회차 보너스 여부 | |
 
+### 3.1 추론 근거 — 가설 = 컬럼
+
+Mitra는 로또를 본 적이 없다. 합성 테이블로 "예시 표를 보고 컬럼과 라벨의 관계를 추정하는 법"만 배운 모델이다.
+따라서 **우리가 컬럼으로 넣은 가설 안에서만** 패턴을 찾는다.
+
+| 가설 | 담는 컬럼 | 비고 |
+|------|-----------|------|
+| H1 공 세트 편향 (m03 가설) | `ball_set` × 세트별 빈도, m03 사후확률 | 서비스의 원래 가설 |
+| H2 최근 흐름(hot) | 최근 10/30/100회 출현 수 | |
+| H3 오래 안 나옴(cold) | gap, 같은 세트 기준 gap | 독립 추첨이면 도박사의 오류. 모델이 판단하게 둔다 |
+| H4 번호 자체 성질 | 홀짝, 구간, 끝자리 | 대조군 (영향 없어야 정상) |
+
+판정 방식: 컨텍스트 안에서 어떤 컬럼 값이 O(출현)와 함께 움직이면 그 번호의 확률을 올리고, 아무 관계가 없으면
+모든 번호에 기저율(≈13.3%) 근처 값을 낸다. **평평한 출력 = "패턴 없음"이라는 결론**이며, 그 자체가 유효한 결과다.
+
 제외(기본값): **모의추첨(리허설) 번호**. 같은 회차 리허설은 구매 마감(토 20:00) 전에 알 수 없으므로 누수다.
 직전 회차 이하의 리허설만 쓰는 버전은 실험 플래그(`--use-rehearsal`)로 백테스트에서만 비교한다.
 
@@ -101,6 +130,7 @@ prob_bs = p[bs] / p[bs].sum()      # (45,) — generate_numbers()에 그대로 �
 | 오라클 서버에서 매시간 재학습 루프에 편입 | ✗ — 같은 이유. 새 데이터는 주 1회뿐이라 의미도 없음 |
 | **아이맥에서 주 1회 배치 추론 → 확률 테이블만 DB에 업서트** | ✅ 권장 — 이미 매일 크롤링이 돌고 있고 MPS 사용 가능 |
 | GitHub Actions (CPU, `fine_tune=False`) | 차선 — 아이맥이 꺼져 있을 때의 백업 |
+| 클라우드 GPU 1회성 작업 (모드 B) | mitra-finetune은 GPU 전용. A에서 신호가 보일 때만 주 1회 수 분짜리 작업으로 추가 |
 
 서버는 **autogluon/torch를 설치하지 않는다.** m04의 서버 측 산출물은 `(5, 45)` 확률 테이블 하나뿐이다.
 
@@ -190,5 +220,8 @@ PR1 결과가 나쁘면 PR2/3은 "실험 탭" 수준으로 축소하거나 보�
 
 참고:
 - [Mitra: Mixed synthetic priors for enhancing tabular foundation models (Amazon Science)](https://www.amazon.science/blog/mitra-mixed-synthetic-priors-for-enhancing-tabular-foundation-models)
+- [Mitra-v2 Technical Report (arXiv 2609.04540)](https://arxiv.org/abs/2609.04540)
 - [autogluon/mitra-classifier-2 (Hugging Face)](https://huggingface.co/autogluon/mitra-classifier-2)
+- [autogluon/mitra-finetune (Hugging Face)](https://huggingface.co/autogluon/mitra-finetune)
+- [TabArena Mitra-v2 wrapper PR #520](https://github.com/autogluon/tabarena/pull/520)
 - [AutoGluon Tabular — Foundational Models](https://auto.gluon.ai/stable/tutorials/tabular/tabular-foundational-models.html)
