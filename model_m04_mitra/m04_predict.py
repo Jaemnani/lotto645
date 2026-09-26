@@ -76,7 +76,10 @@ def upsert(pred: dict):
     from supabase import create_client
 
     load_dotenv(os.path.join(m04_data.ROOT, ".env"))
-    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
+    # model_predictions 는 RLS 로 anon 쓰기가 막혀 있다 (migration 005) → service_role 키 필수
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not key:
+        raise SystemExit("[m04] SUPABASE_SERVICE_KEY 가 없습니다 — model_predictions 쓰기에는 service_role 키가 필요합니다")
     sb = create_client(os.getenv("SUPABASE_URL"), key)
     rows = [
         {
