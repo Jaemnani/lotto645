@@ -34,6 +34,7 @@ lotto645/
 ├── frontend/          # React 프론트엔드 (Vite + Tailwind)
 ├── model_m02_claude/  # LSTM 모델 (실험)
 ├── model_m03_claude/  # 베이지안 빈도 모델 (운영)
+├── model_m04_mitra/   # Mitra-v2 테이블 파운데이션 모델 (실험, 아이맥 주간 배치)
 ├── scripts/           # Supabase 동기화 스크립트
 ├── supabase/          # DB 마이그레이션 SQL
 ├── web/               # FastAPI 백엔드
@@ -50,7 +51,7 @@ lotto645/
 | 백엔드 | FastAPI, Python 3.12 |
 | 프론트엔드 | React, TypeScript, Vite, Tailwind CSS |
 | DB | Supabase (PostgreSQL) |
-| 모델 | Bayesian Frequency Model (운영) · PyTorch LSTM (실험) |
+| 모델 | Bayesian Frequency Model (운영) · Amazon Mitra-v2 via AutoGluon (m04, 실험) · PyTorch LSTM (실험) |
 | 서버 | Oracle Cloud Free Tier (Ubuntu 24.04) |
 | 스케줄러 | APScheduler (서버, 매시간 재학습 + 토요일 통계), launchd LaunchAgent (아이맥, 매일 크롤링 + 금요일 구매) |
 
@@ -82,11 +83,24 @@ lotto645/
 | target_round | 응모 회차 |
 | ball_set | 볼셋 |
 | strategy | 추출 방식 (1~4) |
+| model | 추출에 사용된 모델 (m03 / m04, 기본 m03) |
 | numbers | 추출 번호 배열 |
 | rank | 등수 (추첨 후 업데이트) |
 
 ### weekly_announcements
-회차별 통계 공지. 토요일 추첨 후 자동 생성.
+회차별 통계 공지. 토요일 추첨 후 자동 생성. `stats.by_model` 에 모델별 등수 분포.
+
+### model_predictions
+오프라인 배치 모델(m04)의 회차별 번호 확률표. 아이맥이 업서트, 서버는 읽기만.
+
+| 컬럼 | 설명 |
+|------|------|
+| model | 'm04' |
+| target_round | 예측 대상 회차 |
+| ball_set | 1~5 |
+| probs | 번호 1~45 확률 배열 (합 1) |
+| trained_through_round | 컨텍스트에 쓴 마지막 회차 |
+| backend | 'mitra' 등 |
 
 ---
 
@@ -99,6 +113,8 @@ lotto645/
 | 매일 11:00 KST | 네이버 카페 크롤링 → Supabase 동기화 | 아이맥 LaunchAgent (`com.lotto645.daily-crawl`) |
 | 매시간 정각 | DB 신규 회차 감지 시 m03 재학습 + 메모리 리로드 | 서버 APScheduler (`hourly_retrain_check`) |
 | 매주 토요일 21:05 KST | 당첨번호 fetch + 사용자 등수 계산 + 주간 공지 생성 | 서버 APScheduler (`saturday_job`) |
+| 매일 11:00 KST (크롤링 직후) | m04 다음 회차 확률표 계산 → `model_predictions` 업서트 | 아이맥 `cron.sh` (전용 venv 있을 때) |
+| 매시간 정각 | m04 확률표 리로드 | 서버 APScheduler (`hourly_retrain_check`) |
 | 매주 금요일 10:00 KST | 파이프라인 (크롤링→학습→예측→구매) | 아이맥 LaunchAgent (`com.lotto645.friday-buy`) |
 | FastAPI 기동 시 | 30초 후 모델 자동 로드 (없거나 오래됐으면 재학습) | 서버 APScheduler |
 
@@ -138,7 +154,8 @@ curl -X POST http://YOUR_SERVER_IP/api/admin/retrain \
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| POST | /api/extract | 번호 추출 (save=true 시 DB 저장) |
+| POST | /api/extract | 번호 추출 (`model`: m03 기본 / m04, save=true 시 DB 저장). 응답 `model_used` |
+| GET | /api/model/info | m03 학습 정보 + m04 확률표 정보 |
 | GET | /api/draw/latest | 최신 추첨 결과 |
 | GET | /api/announcement/latest | 최신 주간 공지 |
 | GET | /api/announcements | 공지 목록 |
@@ -156,6 +173,9 @@ curl -X POST http://YOUR_SERVER_IP/api/admin/retrain \
 | 2 | 가중 랜덤 — 확률 기반 다양성 확보 |
 | 3 | 구간 균형 — 낮은/중간/높은 번호 골고루 |
 | 4 | Cold 번호 포함 — 오래 안 나온 번호 포함 |
+
+전략은 모델과 독립이다. m03 / m04 중 선택한 모델의 번호별 확률에 같은 전략을 적용한다.
+m04 는 해당 회차 확률표가 없으면 m03 로 폴백한다. 상세: [model_m04_mitra/README.md](model_m04_mitra/README.md)
 
 ---
 
