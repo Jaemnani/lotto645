@@ -7,12 +7,13 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import LottoBall from './LottoBall'
 import { api } from '../api'
-import type { ExtractResponse } from '../types'
-import { STRATEGY_DESC, STRATEGY_LABELS } from '../types'
+import type { ExtractResponse, ModelKey } from '../types'
+import { MODEL_DESC, MODEL_LABELS, STRATEGY_DESC, STRATEGY_LABELS } from '../types'
 
 export default function ExtractPanel() {
   const [ballSet, setBallSet] = useState('0')
   const [strategy, setStrategy] = useState('1')
+  const [model, setModel] = useState<ModelKey>('m03')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<ExtractResponse | null>(null)
@@ -22,7 +23,7 @@ export default function ExtractPanel() {
     setLoading(true)
     setError(null)
     try {
-      const res = await api.extract(Number(ballSet), Number(strategy), false)
+      const res = await api.extract(Number(ballSet), Number(strategy), model, false)
       setResult(res)
     } catch (e) {
       setError((e as Error).message)
@@ -35,7 +36,7 @@ export default function ExtractPanel() {
     setSaving(true)
     setError(null)
     try {
-      const res = await api.extract(Number(ballSet), Number(strategy), true)
+      const res = await api.extract(Number(ballSet), Number(strategy), model, true)
       setResult(res)
     } catch (e) {
       setError((e as Error).message)
@@ -52,10 +53,28 @@ export default function ExtractPanel() {
           번호 추출
         </CardTitle>
         <CardDescription>
-          LSTM 모델이 예측한 번호를 추출합니다
+          모델이 계산한 번호별 확률로 번호를 추출합니다
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
+        {/* 모델 선택 */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-muted-foreground">모델</label>
+          <Select value={model} onValueChange={(v) => { if (v !== null) setModel(v as ModelKey) }}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(['m03', 'm04'] as const).map((m) => (
+                <SelectItem key={m} value={m}>
+                  {MODEL_LABELS[m]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{MODEL_DESC[model]}</p>
+        </div>
+
         {/* 옵션 선택 */}
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
@@ -140,6 +159,9 @@ export default function ExtractPanel() {
               ))}
             </div>
             <div className="flex items-center justify-center gap-2 flex-wrap">
+              <Badge variant={result.model_used === 'm04' ? 'default' : 'secondary'}>
+                {result.model_used}
+              </Badge>
               <Badge variant="secondary">세트 {result.ball_set}</Badge>
               <Badge variant="secondary">{STRATEGY_LABELS[result.strategy]}</Badge>
               <Badge variant="outline">{result.target_round}회차 응모용</Badge>
@@ -147,6 +169,11 @@ export default function ExtractPanel() {
                 <Badge className="bg-green-600 text-white">저장 완료</Badge>
               )}
             </div>
+            {model === 'm04' && result.model_used !== 'm04' && (
+              <p className="text-xs text-muted-foreground text-center">
+                {result.target_round}회차 m04 예측이 아직 없어 m03 로 추출했습니다
+              </p>
+            )}
           </div>
         )}
       </CardContent>

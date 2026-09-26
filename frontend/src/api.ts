@@ -1,4 +1,4 @@
-import type { Announcement, DrawResult, ExtractResponse } from './types'
+import type { Announcement, DrawResult, ExtractResponse, ModelKey } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
@@ -23,8 +23,8 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  extract: (ball_set: number, strategy: number, save: boolean) =>
-    post<ExtractResponse>('/api/extract', { ball_set, strategy, save }),
+  extract: (ball_set: number, strategy: number, model: ModelKey, save: boolean) =>
+    post<ExtractResponse>('/api/extract', { ball_set, strategy, model, save }),
 
   latestDraw: () => get<DrawResult>('/api/draw/latest'),
 

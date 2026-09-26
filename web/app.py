@@ -8,7 +8,7 @@ FastAPI 메인 앱
 import logging
 import os
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 
 import pytz
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from .database import get_supabase, get_supabase_admin
 from .fetcher import fetch_draw, get_latest_round, save_draw_result
-from .number_gen import generate_numbers, get_model_info
+from .number_gen import generate_numbers, get_m04_info, get_model_info
 from .retrain import get_last_result as get_last_retrain_result, retrain
 from .scheduler import create_scheduler
 from .stats import calculate_and_save_stats
@@ -65,6 +65,7 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 class ExtractRequest(BaseModel):
     ball_set: int = 0   # 0=자동, 1-5
     strategy: int = 1   # 1-4
+    model: Literal["m03", "m04"] = "m03"
     save: bool = False
 
 
@@ -73,6 +74,7 @@ class ExtractResponse(BaseModel):
     ball_set:     int
     strategy:     int
     target_round: int
+    model_used:   str    # m04 요청이어도 해당 회차 확률표가 없으면 m03
     saved:        bool
 
 
@@ -93,28 +95,34 @@ def extract(
         session_id = str(uuid.uuid4())
         response.set_cookie("session_id", session_id, max_age=365 * 24 * 3600, httponly=True)
 
-    result       = generate_numbers(ball_set=req.ball_set, strategy=req.strategy)
-    latest       = get_latest_round()
-    target_round = latest + 1
+    target_round = get_latest_round() + 1
+    result       = generate_numbers(
+        ball_set=req.ball_set, strategy=req.strategy, model=req.model, target_round=target_round,
+    )
 
     saved = False
     if req.save:
         db = get_supabase()
-        db.table("user_extractions").insert({
+        row = {
             "session_id":   session_id,
             "target_round": target_round,
             "ball_set":     result["ball_set"],
             "strategy":     result["strategy"],
             "numbers":      result["numbers"],
-        }).execute()
+        }
+        # model 컬럼은 default 'm03' — m03 저장은 migration 005 적용 전에도 깨지지 않게 m04 일 때만 명시
+        if result["model_used"] != "m03":
+            row["model"] = result["model_used"]
+        db.table("user_extractions").insert(row).execute()
         saved = True
-        logger.info(f"[api] 번호 저장: {result['numbers']} ({target_round}회차)")
+        logger.info(f"[api] 번호 저장: {result['numbers']} ({target_round}회차, {result['model_used']})")
 
     return ExtractResponse(
         numbers      = result["numbers"],
         ball_set     = result["ball_set"],
         strategy     = result["strategy"],
         target_round = target_round,
+        model_used   = result["model_used"],
         saved        = saved,
     )
 
@@ -197,9 +205,10 @@ def announcements_list(limit: int = 10):
 # ── API: 모델 정보 ─────────────────────────────────────────────────────────────
 @app.get("/api/model/info")
 def model_info():
-    """현재 서빙 중인 m03 모델의 학습 회차 / 로드 시각 / 마지막 재학습 결과"""
+    """m03: 학습 회차 / 로드 시각 / 마지막 재학습 결과,  m04: 확률표 대상 회차 / 백엔드 / 로드 시각"""
     info = get_model_info()
     info["last_retrain"] = get_last_retrain_result()
+    info["m04"] = get_m04_info()
     return info
 
 

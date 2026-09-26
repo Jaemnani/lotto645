@@ -2,6 +2,7 @@
 APScheduler
   - 토요일 21:05 KST : 추첨 결과 수집 + 통계 계산 (saturday_job)
   - 매 시간 정각     : Supabase 신규 회차 폴링 → 있으면 m03 재학습 (hourly_retrain_check)
+                       + m04 확률표(model_predictions) 리로드
   - 기동 시 1회      : 모델 파일 없거나 최신 회차와 차이나면 즉시 재학습
 """
 
@@ -39,8 +40,11 @@ def _latest_round_in_db() -> int | None:
 
 
 def hourly_retrain_check():
-    """매 시간 정각: DB 최신 회차가 현재 모델보다 크면 재학습"""
-    from .number_gen import get_model_info
+    """매 시간 정각: DB 최신 회차가 현재 모델보다 크면 재학습 + m04 확률표 리로드"""
+    from .number_gen import get_model_info, reload_m04
+
+    info_m04 = reload_m04()   # 실패해도 예외 없이 error 필드로만 남음 (m03 폴백)
+    logger.info(f"[scheduler] m04 확률표: {info_m04}")
 
     try:
         info = get_model_info()
