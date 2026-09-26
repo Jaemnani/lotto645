@@ -69,6 +69,7 @@ def calculate_and_save_stats(db: Client, round_no: int) -> WeeklyAnnouncement | 
     )
 
     rank_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+    by_model: dict[str, dict[int, int]] = {}
     for ext in extractions:
         rank, match, b_match = calculate_rank(ext["numbers"], winning, bonus)
         db.table("user_extractions").update({
@@ -77,9 +78,16 @@ def calculate_and_save_stats(db: Client, round_no: int) -> WeeklyAnnouncement | 
             "bonus_match": b_match,
         }).eq("id", ext["id"]).execute()
         rank_counts[rank] += 1
+        model = ext.get("model") or "m03"
+        by_model.setdefault(model, {r: 0 for r in range(1, 7)})[rank] += 1
 
     stats = {RANK_LABELS[r]: rank_counts[r] for r in range(1, 7)}
     stats["total"] = len(extractions)
+    # 모델별 등수 분포 (m03 vs m04 비교용)
+    stats["by_model"] = {
+        m: {**{RANK_LABELS[r]: c[r] for r in range(1, 7)}, "total": sum(c.values())}
+        for m, c in sorted(by_model.items())
+    }
 
     now_iso = datetime.utcnow().isoformat()
 
