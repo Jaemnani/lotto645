@@ -5,6 +5,7 @@
 alter table draw_results          enable row level security;
 alter table weekly_announcements  enable row level security;
 alter table user_extractions      enable row level security;
+alter table model_predictions     enable row level security;
 
 -- draw_results : 누구나 SELECT
 drop policy if exists "public read draw_results" on draw_results;
@@ -14,6 +15,11 @@ create policy "public read draw_results" on draw_results
 -- weekly_announcements : 누구나 SELECT
 drop policy if exists "public read announcements" on weekly_announcements;
 create policy "public read announcements" on weekly_announcements
+  for select to anon, authenticated using (true);
+
+-- model_predictions : 누구나 SELECT (쓰기는 service_role 배치만)
+drop policy if exists "public read model_predictions" on model_predictions;
+create policy "public read model_predictions" on model_predictions
   for select to anon, authenticated using (true);
 
 -- user_extractions : 익명 INSERT 허용(번호 저장) + SELECT 허용.
@@ -26,7 +32,7 @@ create policy "public insert extractions" on user_extractions
   for insert to anon, authenticated with check (true);
 
 -- ── 테이블/시퀀스 권한 ──────────────────────────────────────────────────────────
-grant select on draw_results, weekly_announcements, user_extractions to anon, authenticated;
+grant select on draw_results, weekly_announcements, user_extractions, model_predictions to anon, authenticated;
 grant insert on user_extractions to anon, authenticated;
 
 -- service_role : 전체 (적재/관리). bypassrls 라 정책 무관하게 동작.

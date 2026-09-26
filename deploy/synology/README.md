@@ -94,6 +94,13 @@ curl -s -H "Authorization: Bearer $SUPABASE_KEY" \
 ```
 > 401 = ANON_KEY ↔ JWT_SECRET 불일치 · 404 = 마이그레이션 미적용. (docs/02 트러블슈팅 표)
 
+### 3-1) 이미 떠 있는 DB 에 새 마이그레이션 적용 (예: 005 model_predictions)
+init 스크립트는 DB 디렉토리가 비어 있을 때만 돌기 때문에, 기존 NAS DB 에는 수동으로 한 번 적용한다(멱등).
+```bash
+docker exec -i lotto645-db psql -U postgres < ../../supabase/migrations/005_model_predictions.sql
+docker exec -i lotto645-db psql -U postgres < db/90_rls.sql      # RLS/권한 재적용 + 스키마 캐시 리로드
+```
+
 ### 4) 데이터 이관 (오라클/Supabase → NAS, 선택)
 ```bash
 # 기존 Supabase 에서 덤프 → NAS Postgres 로 복원 (3 테이블만)
