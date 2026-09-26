@@ -21,5 +21,12 @@ create table if not exists model_predictions (
 comment on table  model_predictions       is '오프라인 배치 모델의 회차별 번호 확률표 (공세트 1~5 × 번호 45).';
 comment on column model_predictions.probs is '길이 45 배열. index 0 = 1번. 합 1.';
 
+-- 이 표가 곧 사용자에게 나가는 번호를 결정하므로 anon 키로는 읽기만 허용한다.
+-- 쓰기 정책은 두지 않음 → 업서트는 RLS 를 우회하는 service_role 키(아이맥 배치)만 가능.
+alter table model_predictions enable row level security;
+drop policy if exists "public read model_predictions" on model_predictions;
+create policy "public read model_predictions" on model_predictions
+  for select to anon, authenticated using (true);
+
 alter table user_extractions add column if not exists model text not null default 'm03';
 comment on column user_extractions.model is '추출에 실제 사용된 모델 (m03 | m04). m04 예측이 없으면 m03 로 폴백된 값.';

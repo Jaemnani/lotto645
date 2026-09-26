@@ -47,6 +47,7 @@ python m04_backtest.py --backend uniform m03 mitra
 ## 2. 주간 예측 (운영)
 
 `cron.sh` 가 크롤링 직후 자동 실행한다 (`M04_PYTHON` venv 가 있을 때만).
+`model_predictions` 는 RLS 로 anon 쓰기를 막아 두었으므로, 아이맥 `.env` 에 **`SUPABASE_SERVICE_KEY`** 가 있어야 업서트된다.
 
 ```bash
 python model_m04_mitra/m04_predict.py --source supabase            # 예측 + 업서트
