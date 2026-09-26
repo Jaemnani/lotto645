@@ -27,7 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import m04_data                                           # noqa: E402
-from m04_features import build, context                   # noqa: E402
+from m04_features import build, context, context_same_set  # noqa: E402
 from m04_model import make_backend, normalize_round, to_posterior   # noqa: E402
 
 HERE      = os.path.dirname(os.path.abspath(__file__))
@@ -35,15 +35,25 @@ OUT_PATH  = os.path.join(HERE, "prediction.json")
 MODEL_KEY = "m04"
 
 
-def predict(source: str, backend: str, context_rounds: int, **backend_kw) -> dict:
+def predict(source: str, backend: str, context_rounds: int, context_mode: str = "recent", **backend_kw) -> dict:
     hist = m04_data.load(source)
     ft = build(hist, use_rehearsal=backend_kw.get("use_rehearsal", False))
-    X, y = context(ft, len(hist), context_rounds)
+    q = ft.next_query                                       # (5, 45, F)
 
     t0 = time.time()
-    model = make_backend(backend, **backend_kw).fit(X, y)
-    q = ft.next_query                                       # (5, 45, F)
-    raw = model.predict(q.reshape(-1, q.shape[-1])).reshape(5, 45)
+    if context_mode == "same_set":
+        # 공세트마다 그 세트 회차만으로 따로 컨텍스트를 구성 (백테스트 --context same_set 과 동일)
+        raw, n_rows = [], 0
+        for b in range(1, 6):
+            X, y = context_same_set(ft, len(hist), context_rounds, b)
+            raw.append(make_backend(backend, **backend_kw).fit(X, y).predict(q[b - 1]))
+            n_rows = max(n_rows, len(y))
+        raw = np.stack(raw)
+    else:
+        X, y = context(ft, len(hist), context_rounds)
+        model = make_backend(backend, **backend_kw).fit(X, y)
+        raw = model.predict(q.reshape(-1, q.shape[-1])).reshape(5, 45)
+        n_rows = len(y)
     probs = np.stack([to_posterior(normalize_round(r)) for r in raw])
 
     last = int(hist.rounds[-1])
@@ -52,9 +62,9 @@ def predict(source: str, backend: str, context_rounds: int, **backend_kw) -> dic
         "backend": backend,
         "target_round": last + 1,
         "trained_through_round": last,
-        "context_rows": int(len(y)),
+        "context_rows": int(n_rows),
         "probs": {str(b): probs[b - 1].round(6).tolist() for b in range(1, 6)},
-        "config": {"context_rounds": context_rounds, "features": ft.names,
+        "config": {"context_rounds": context_rounds, "context": context_mode, "features": ft.names,
                    **{k: v for k, v in backend_kw.items() if v is not None}},
         "elapsed_seconds": round(time.time() - t0, 2),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -88,6 +98,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default="supabase", choices=["csv", "supabase"])
     ap.add_argument("--backend", default="mitra", help="mitra | logreg | m03 | uniform")
+    ap.add_argument("--context", default="recent", choices=["recent", "same_set"])
     ap.add_argument("--context-rounds", type=int, default=110)
     ap.add_argument("--use-rehearsal", action="store_true")
     ap.add_argument("--fine-tune", action="store_true")
@@ -99,7 +110,7 @@ def main():
     args = ap.parse_args()
 
     pred = predict(
-        args.source, args.backend, args.context_rounds,
+        args.source, args.backend, args.context_rounds, args.context,
         use_rehearsal=args.use_rehearsal, fine_tune=args.fine_tune,
         n_estimators=args.n_estimators, device=args.device, hf_model=args.hf_model,
     )
