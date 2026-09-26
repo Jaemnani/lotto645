@@ -17,6 +17,7 @@ export default function ExtractPanel() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<ExtractResponse | null>(null)
+  const [requestedModel, setRequestedModel] = useState<ModelKey>('m03')
   const [error, setError] = useState<string | null>(null)
 
   async function handleExtract() {
@@ -25,6 +26,7 @@ export default function ExtractPanel() {
     try {
       const res = await api.extract(Number(ballSet), Number(strategy), model, false)
       setResult(res)
+      setRequestedModel(model)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -38,6 +40,7 @@ export default function ExtractPanel() {
     try {
       const res = await api.extract(Number(ballSet), Number(strategy), model, true)
       setResult(res)
+      setRequestedModel(model)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -169,7 +172,7 @@ export default function ExtractPanel() {
                 <Badge className="bg-green-600 text-white">저장 완료</Badge>
               )}
             </div>
-            {model === 'm04' && result.model_used !== 'm04' && (
+            {requestedModel === 'm04' && result.model_used !== 'm04' && (
               <p className="text-xs text-muted-foreground text-center">
                 {result.target_round}회차 m04 예측이 아직 없어 m03 로 추출했습니다
               </p>

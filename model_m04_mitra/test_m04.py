@@ -104,3 +104,73 @@ def test_baseline_backends(hist):
     np.testing.assert_allclose(u, 6 / 45)
     m = M03Backend().fit(X, y).predict(q)
     assert abs(m.sum() - 6) < 1e-6
+
+
+def test_mitra_backend_is_seeded(monkeypatch):
+    """Mitra 전처리가 전역 np.random 을 쓰므로, 같은 입력이면 같은 결과 + 전역 RNG 상태는 보존되어야 한다."""
+    import types
+
+    class FakeMitra:
+        def __init__(self, **kw):
+            self.kw = kw
+
+        def fit(self, X, y):   # AutoGluon Preprocessor.determine_mirror 와 같은 방식
+            self.mirror = np.random.choice([1, -1], size=(1, X.shape[1]))
+            return self
+
+        def predict_proba(self, X):
+            s = 1 / (1 + np.exp(-(X * self.mirror).sum(axis=1) / 100))
+            return np.stack([1 - s, s], axis=1)
+
+    mod = types.ModuleType("sklearn_interface")
+    mod.MitraClassifier = FakeMitra
+    for name in ("autogluon", "autogluon.tabular", "autogluon.tabular.models",
+                 "autogluon.tabular.models.mitra", "autogluon.tabular.models.mitra.sklearn_interface"):
+        monkeypatch.setitem(sys.modules, name, mod if name.endswith("sklearn_interface") else types.ModuleType(name))
+    from m04_model import MitraBackend
+
+    X = np.random.default_rng(0).random((90, 16))
+    y = np.array([0, 1] * 45)
+    np.random.seed(123)
+    before = np.random.random()
+    np.random.seed(123)
+    a = MitraBackend(device="cpu").fit(X, y).predict(X)
+    b = MitraBackend(device="cpu").fit(X, y).predict(X)
+    np.testing.assert_array_equal(a, b)
+    assert np.random.random() == before   # 전역 RNG 흐름을 건드리지 않음
+
+
+def test_load_supabase_pages_past_1000(monkeypatch):
+    """postgrest range() 는 offset/limit 을 누적하므로 페이지마다 새 쿼리여야 1,000행 넘어도 정상."""
+    import types
+
+    rows = [{"round": 733 + i // 2, "is_winning": bool(i % 2), "ball_set": 1,
+             "n1": 1, "n2": 2, "n3": 3, "n4": 4, "n5": 5, "n6": 6, "bonus": 7} for i in range(2500)]
+
+    class Q:
+        def __init__(self):
+            self.ranges = []
+
+        def select(self, *_):
+            return self
+
+        def order(self, *_):
+            return self
+
+        def range(self, a, b):
+            self.ranges.append((a, b))
+            return self
+
+        def execute(self):
+            a, b = self.ranges[0]          # 누적된 파라미터 중 첫 값이 쓰이는 최악의 경우를 흉내
+            return types.SimpleNamespace(data=rows[a:b + 1])
+
+    class SB:
+        def table(self, _):
+            return Q()
+
+    fake_supabase = types.ModuleType("supabase")
+    fake_supabase.create_client = lambda *_: SB()
+    monkeypatch.setitem(sys.modules, "supabase", fake_supabase)
+    h = m04_data.load_supabase()
+    assert len(h) == 1250 and h.rounds[-1] == 733 + 1249

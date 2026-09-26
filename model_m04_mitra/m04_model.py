@@ -93,6 +93,7 @@ class MitraBackend:
     ):
         from autogluon.tabular.models.mitra.sklearn_interface import MitraClassifier
 
+        self.seed = seed
         self.model = MitraClassifier(
             hf_model=hf_model,
             fine_tune=fine_tune,
@@ -106,7 +107,14 @@ class MitraBackend:
         )
 
     def fit(self, X, y):
-        self.model.fit(X, y.astype(int))
+        # AutoGluon Mitra 전처리(random_mirror_x)가 시드 없는 전역 np.random 으로 feature 부호를 뒤집는다.
+        # 같은 회차를 매일 다시 예측해도 결과가 같도록 전역 RNG 를 잠깐 고정했다가 되돌린다.
+        state = np.random.get_state()
+        np.random.seed(self.seed)
+        try:
+            self.model.fit(X, y.astype(int))
+        finally:
+            np.random.set_state(state)
         return self
 
     def predict(self, X):

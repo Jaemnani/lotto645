@@ -73,6 +73,7 @@ def run(args) -> dict:
         n_estimators=args.n_estimators,
         device=args.device,
         hf_model=args.hf_model,
+        seed=args.seed,
     )
     rng = np.random.default_rng(args.seed)
     per_round = {b: [] for b in args.backend}
@@ -151,6 +152,8 @@ def main():
     ap.add_argument("--out", default=None, help="결과 JSON 경로 (기본: backtest/ 아래 타임스탬프)")
     args = ap.parse_args()
 
+    if args.holdout <= 0 and args.final:
+        ap.error("--final 은 --holdout 1 이상이어야 합니다")
     if args.context_rounds * 45 > 5120:
         print(f"⚠️  컨텍스트 {args.context_rounds * 45}행 — Mitra-v2 사전학습 컨텍스트(5,120행)를 넘습니다")
 

@@ -95,15 +95,21 @@ def load_supabase() -> History:
 
     load_dotenv(os.path.join(ROOT, ".env"))
     sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-    q = (
-        sb.table("draw_results")
-        .select("round,is_winning,ball_set," + ",".join(MAIN_COLS) + ",bonus")
-        .order("round")
-        .order("is_winning")
-    )
+    def page(start: int, end: int):
+        # postgrest range() 는 offset/limit 을 덮어쓰지 않고 누적하므로 페이지마다 쿼리를 새로 만든다
+        return (
+            sb.table("draw_results")
+            .select("round,is_winning,ball_set," + ",".join(MAIN_COLS) + ",bonus")
+            .order("round")
+            .order("is_winning")
+            .range(start, end)
+            .execute()
+            .data
+        )
+
     rows, start, step = [], 0, 1000
     while True:
-        r = q.range(start, start + step - 1).execute().data
+        r = page(start, start + step - 1)
         if not r:
             break
         rows.extend(r)
