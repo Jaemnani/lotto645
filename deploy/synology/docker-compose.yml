@@ -57,6 +57,7 @@ services:
       - ../../supabase/migrations/002_add_rehearsal_to_draw_results.sql:/docker-entrypoint-initdb.d/10_002.sql:ro
       - ../../supabase/migrations/003_fix_round_unique_constraint.sql:/docker-entrypoint-initdb.d/10_003.sql:ro
       - ../../supabase/migrations/004_add_prize_details_to_draw_results.sql:/docker-entrypoint-initdb.d/10_004.sql:ro
+      - ../../supabase/migrations/005_model_predictions.sql:/docker-entrypoint-initdb.d/10_005.sql:ro
       - ./db/90_rls.sql:/docker-entrypoint-initdb.d/90_rls.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
