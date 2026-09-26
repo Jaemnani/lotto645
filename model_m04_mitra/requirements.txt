@@ -1,0 +1,10 @@
+# m04 전용 venv (서버에는 설치하지 않음 — 서버는 model_predictions 테이블만 읽는다)
+#   python3 -m venv ~/workspace/venv_m04 && ~/workspace/venv_m04/bin/pip install -r model_m04_mitra/requirements.txt
+# macOS 는 torch<2.11 제약이 autogluon 쪽에 걸려 있다.
+autogluon.tabular[mitra]==1.6.3
+numpy>=1.25,<2.6
+pandas>=2.0,<2.4
+scikit-learn>=1.4,<1.10
+supabase
+python-dotenv
+pytest
