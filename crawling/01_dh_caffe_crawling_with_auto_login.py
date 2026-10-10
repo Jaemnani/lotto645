@@ -44,7 +44,8 @@ try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 except ImportError:
-    pass
+    print("[경고] python-dotenv 미설치 → .env 를 읽지 못함 (pip install python-dotenv). "
+          "쿠키 만료 시 자동로그인 불가")
 
 # ─────────────────────────────────────────────
 # 설정
