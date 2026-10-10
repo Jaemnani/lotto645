@@ -15,6 +15,8 @@ import os
 import io
 import sys
 import base64
+import json
+import re
 import time
 import pickle
 import random
@@ -29,6 +31,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -36,15 +39,22 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 from web.fetcher import fetch_draw  # noqa: E402  (공홈 API — 등수별 상세 조회용)
 
+# 계정/키는 코드에 두지 않고 프로젝트 루트 .env 에서 읽는다 (NAVER_ID, NAVER_PW, GEMINI_API_KEY)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+except ImportError:
+    pass
+
 # ─────────────────────────────────────────────
 # 설정
 # ─────────────────────────────────────────────
-NAVER_ID = os.getenv("NAVER_ID", "dpwoans")
-NAVER_PW = os.getenv("NAVER_PW", "eksldkQk88*")   # 환경변수로 관리 권장
+NAVER_ID = os.getenv("NAVER_ID", "")
+NAVER_PW = os.getenv("NAVER_PW", "")
 LOGIN_URL  = "https://nid.naver.com/nidlogin.login"
 COOKIE_PATH = os.path.join(os.path.dirname(__file__), "naver_cookies.pkl")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "../data/history_from_cafe.csv")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyADvPITzZOpRZF7Sgm_Fo2Mkm9-pgEdeIs")  # https://aistudio.google.com/apikey 에서 발급
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # https://aistudio.google.com/apikey
 
 # 공홈 API(등수별 상세) 컬럼 — scripts/sync_cafe_history.py의 DETAIL_FIELDS와 순서 동일해야 함
 # 뒤에 추가할 땐 여기 끝에 이어붙일 것 (마이그레이션이 컬럼 수 차이만큼 뒤에서부터 채움)
@@ -121,8 +131,8 @@ def migrate_csv_add_date(history_path: str):
         lines = [l.strip() for l in f if l.strip()]
     if not lines:
         return
-    if len(lines[0].split(",")) == 10:
-        return   # 이미 마이그레이션됨
+    if len(lines[0].split(",")) >= 10:
+        return   # 이미 draw_date 있음 (10=구버전, 26=등수별 상세 포함 현재 형식)
 
     print("[마이그레이션] draw_date 컬럼 추가 중...")
     new_lines = []
@@ -256,6 +266,9 @@ def login_with_pyautogui(driver) -> bool:
     클립보드 붙여넣기 + JavaScript React input setter 방식으로 로그인.
     Selenium send_keys() 이벤트 패턴을 완전히 우회합니다.
     """
+    if not NAVER_ID or not NAVER_PW:
+        print("[자동로그인] .env 에 NAVER_ID / NAVER_PW 가 없음 → 자동로그인 건너뜀")
+        return False
     print("[자동로그인] 클립보드+JS 방식으로 로그인 시도...")
     driver.get(LOGIN_URL)
     time.sleep(2)
@@ -663,61 +676,98 @@ def _fetch_official_details(round_no: int) -> np.ndarray:
 # ─────────────────────────────────────────────
 # 메인 크롤링 로직 (원본과 동일)
 # ─────────────────────────────────────────────
-def crawl_cafe(driver, history):
-    history_numbers = history[:, 1].astype(int)
+CAFE_ID = 29572332          # 동행복권 커뮤니티
+MENU_ID = 22                # [로또복권] 추첨리허설
+# 네이버 카페 새 UI(/f-e/...)로 바뀌며 목록 페이지의 cafe_main iframe 이 사라짐 → JSON API 로 목록 수집
+LIST_API = (
+    "https://apis.naver.com/cafe-web/cafe2/ArticleListV2dot1.json"
+    "?search.clubid={cafe}&search.menuid={menu}&search.page={page}&search.perPage=50"
+)
+# 본문: 새 UI 주소 우선, 안 되면 예전 iframe 주소
+ARTICLE_URLS = (
+    "https://cafe.naver.com/f-e/cafes/{cafe}/articles/{aid}?menuid={menu}&referrerAllArticles=false",
+    "https://cafe.naver.com/dhlottery?iframe_url_utf8=%2FArticleRead.nhn"
+    "%253Fclubid%3D{cafe}%2526page%3D1%2526menuid%3D{menu}%2526boardtype%3DL"
+    "%2526articleid%3D{aid}%2526referrerAllArticles%3Dfalse",
+)
+CONTAINER_CLASSES = ("se-main-container", "ContentRenderer")
+ROUND_IN_SUBJECT = re.compile(r"로또6/45\s*제\s*(\d+)\s*회")
 
-    page_url = (
-        "https://cafe.naver.com/dhlottery"
-        "?iframe_url=/ArticleList.nhn"
-        "%3Fsearch.clubid=29572332"
-        "%26search.menuid=22"
-        "%26search.boardtype=L"
-        "%26search.totalCount=151"
-        "%26search.cafeId=29572332"
-        "%26search.page="
-    )
+
+def _get_json(driver, url: str) -> dict:
+    """로그인된 브라우저로 JSON API 호출 (쿠키 재사용)."""
+    driver.get(url)
+    body = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.TAG_NAME, "body"))
+    ).text
+    return json.loads(body)
+
+
+def list_articles(driver) -> np.ndarray:
+    """
+    리허설 게시판 글 목록 → [[articleId, 회차], ...] (최신 글 먼저).
+    같은 회차 글이 여러 개면 최신 글 하나만 남긴다.
+    """
+    rows, seen, page = [], set(), 1
+    while True:
+        data = _get_json(driver, LIST_API.format(cafe=CAFE_ID, menu=MENU_ID, page=page))
+        result = data["message"]["result"]
+        for a in result.get("articleList", []):
+            m = ROUND_IN_SUBJECT.search(a.get("subject", ""))
+            if not m or m.group(1) in seen:
+                continue
+            seen.add(m.group(1))
+            rows.append([str(a["articleId"]), m.group(1)])
+        if not result.get("hasNext"):
+            break
+        page += 1
+        time.sleep(random.uniform(0.5, 1.2))
+    print(f"[목록] 회차 글 {len(rows)}개 ({page}페이지)")
+    return np.array(rows, dtype=str).reshape(-1, 2)
+
+
+def open_article(driver, article_id: str, timeout: float = 15):
+    """
+    글 본문 컨테이너를 찾아 반환. 새 UI(iframe 없음)와 예전 UI(cafe_main iframe) 모두 지원.
+    못 찾으면 TimeoutException.
+    """
+    for tmpl in ARTICLE_URLS:
+        driver.get(tmpl.format(cafe=CAFE_ID, menu=MENU_ID, aid=article_id))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            driver.switch_to.default_content()
+            frames = driver.find_elements(By.ID, "cafe_main")
+            if frames:
+                driver.switch_to.frame(frames[0])
+            for cls in CONTAINER_CLASSES:
+                found = driver.find_elements(By.CLASS_NAME, cls)
+                if found and found[0].text.strip():
+                    return found[0]
+            time.sleep(0.5)
+    raise TimeoutException(f"게시글 {article_id} 본문을 찾지 못함")
+
+
+def merge_history(crawled: list, history: np.ndarray) -> list:
+    """
+    카페에서 얻은 행 + 카페에 글이 없는 기존 행(733~834회 공홈 백필 등)을 회차 순으로 합친다.
+    (예전에는 카페 행만으로 CSV 를 덮어써서 카페 개설 전 회차가 매번 지워졌다)
+    같은 회차 안에서는 원래 순서(리허설 → 본게임)를 유지한다.
+    """
+    crawled_rounds = {int(r[1]) for r in crawled}
+    kept = [row for row in history if int(row[1]) not in crawled_rounds]
+    merged = list(crawled) + kept
+    return sorted(merged, key=lambda r: int(r[1]))   # sorted 는 안정 정렬
+
+
+def crawl_cafe(driver, history):
+    history_numbers = history[:, 1].astype(int) if len(history) else np.array([], dtype=int)
 
     # ── 게시글 목록 수집 ──
-    page_idx = 1
-    text_list = np.array([]).reshape(-1, 2)
-
-    while True:
-        cur_url = page_url + str(page_idx)
-        driver.get(cur_url)
-
-        iframe = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "cafe_main"))
-        )
-        driver.switch_to.frame(iframe)
-        content = driver.find_element(By.TAG_NAME, "body").text
-
-        if "등록된 게시글이 없습니다." in content:
-            break
-
-        content2 = np.array(content.split("\n"))
-        list_idx = np.argwhere(content2 == "게시물 목록")
-
-        if len(list_idx) == 2:
-            idx_content = list_idx[1][0]
-        elif len(list_idx) == 1:
-            idx_content = list_idx[0][0]
-        else:
-            print("게시물 목록이 한 개 혹은 두 개가 나오지 않는 경우가 있네요? 확인하세요")
-            break
-
-        content3 = content2[idx_content + 1:]
-        list_idx = np.argwhere(content3 == "글쓰기")
-        idx_page = list_idx[0][0]
-        infos = content3[:idx_page].reshape(-1, 4)
-        infos = infos[:, :2]
-        infos[:, 1] = [info.split("로또6/45 제")[1].split("회")[0] for info in infos[:, 1]]
-        text_list = np.vstack((text_list, infos))
-        page_idx += 1
-
-    print(f"총 페이지 수: {page_idx}")
+    text_list = list_articles(driver)
 
     # ── 각 게시글 상세 크롤링 ──
     result_history = []
+    failed: list[int] = []
 
     for name_tag, tap in text_list[::-1]:
         # 이미 수집된 회차는 건너뜀
@@ -726,45 +776,31 @@ def crawl_cafe(driver, history):
                 result_history.append(row)
             continue
 
-        tap_url = (
-            "https://cafe.naver.com/dhlottery"
-            "?iframe_url_utf8=%2FArticleRead.nhn"
-            "%253Fclubid%3D29572332"
-            "%2526page%3D1"
-            "%2526menuid%3D22"
-            "%2526boardtype%3DL"
-            "%2526articleid%3D" + name_tag +
-            "%2526referrerAllArticles%3Dfalse"
-        )
-        driver.get(tap_url)
-
-        iframe = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "cafe_main"))
-        )
-        driver.switch_to.frame(iframe)
-
         try:
-            container = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "se-main-container"))
-            )
-        except Exception:
-            container = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "ContentRenderer"))
-            )
+            container = open_article(driver, name_tag)
+        except TimeoutException as e:
+            print(f"[{tap}회차] {e} → 건너뜀")
+            failed.append(int(tap))
+            continue
 
         content = container.text
         content2 = np.array(content.split("\n"))
         content3 = np.array([c.replace(" ", "") for c in content2])
 
         try:
-            name_ballset = np.argwhere(content3 == "1.볼세트")[0][0]
-            ballset = content3[name_ballset + 1]
-        except Exception:
-            ballset = int(content2[0][-1])
+            try:
+                name_ballset = np.argwhere(content3 == "1.볼세트")[0][0]
+                ballset = content3[name_ballset + 1]
+            except Exception:
+                ballset = int(content2[0][-1])
 
-        name_rehearsal = np.argwhere(content3 == "2.모의추첨번호(리허설)")[0][0]
-        name_winning   = np.argwhere(content3 == "3.당첨번호(추첨순)")[0][0]
-        name_nextwin   = np.argwhere(content3 == "4.당첨번호(오름차순)")[0][0]
+            name_rehearsal = np.argwhere(content3 == "2.모의추첨번호(리허설)")[0][0]
+            name_winning   = np.argwhere(content3 == "3.당첨번호(추첨순)")[0][0]
+            name_nextwin   = np.argwhere(content3 == "4.당첨번호(오름차순)")[0][0]
+        except (IndexError, ValueError):
+            print(f"[{tap}회차] 본문 형식이 예상과 다름 → 건너뜀\n  본문 앞부분: {content[:200]!r}")
+            failed.append(int(tap))
+            continue
 
         # 리허설 번호 파싱
         gap_r = name_winning - name_rehearsal
@@ -809,7 +845,9 @@ def crawl_cafe(driver, history):
         print(res_winning)
         print()
 
-    return result_history
+    if failed:
+        print(f"[경고] 본문을 못 읽은 회차: {sorted(failed)} — 다음 실행 때 다시 시도됨")
+    return merge_history(result_history, history)
 
 
 # ─────────────────────────────────────────────
