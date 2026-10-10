@@ -31,7 +31,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -681,7 +681,7 @@ MENU_ID = 22                # [로또복권] 추첨리허설
 # 네이버 카페 새 UI(/f-e/...)로 바뀌며 목록 페이지의 cafe_main iframe 이 사라짐 → JSON API 로 목록 수집
 LIST_API = (
     "https://apis.naver.com/cafe-web/cafe2/ArticleListV2dot1.json"
-    "?search.clubid={cafe}&search.menuid={menu}&search.page={page}&search.perPage=50"
+    "?search.clubid={cafe}&search.menuid={menu}&search.page={page}&search.perPage=15"
 )
 # 본문: 새 UI 주소 우선, 안 되면 예전 iframe 주소
 ARTICLE_URLS = (
@@ -695,12 +695,18 @@ ROUND_IN_SUBJECT = re.compile(r"로또6/45\s*제\s*(\d+)\s*회")
 
 
 def _get_json(driver, url: str) -> dict:
-    """로그인된 브라우저로 JSON API 호출 (쿠키 재사용)."""
+    """로그인된 브라우저로 JSON API 호출 (쿠키 재사용). 로그인 페이지 등 JSON 이 아니면 RuntimeError."""
     driver.get(url)
-    body = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body"))
-    ).text
-    return json.loads(body)
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+    pre = driver.find_elements(By.TAG_NAME, "pre")       # Chrome JSON 뷰어는 <pre> 안에 원문을 둔다
+    text = pre[0].text if pre else driver.find_element(By.TAG_NAME, "body").text
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"JSON 이 아닌 응답 (로그인 만료?) — {url}\n  응답 앞부분: {text[:200]!r}")
+
+
+MAX_LIST_PAGES = 200   # 15개 × 200 = 3,000글. 무한 순회 방지용 상한
 
 
 def list_articles(driver) -> np.ndarray:
@@ -708,20 +714,30 @@ def list_articles(driver) -> np.ndarray:
     리허설 게시판 글 목록 → [[articleId, 회차], ...] (최신 글 먼저).
     같은 회차 글이 여러 개면 최신 글 하나만 남긴다.
     """
-    rows, seen, page = [], set(), 1
-    while True:
+    rows, seen_rounds, seen_ids, page = [], set(), set(), 1
+    while page <= MAX_LIST_PAGES:
         data = _get_json(driver, LIST_API.format(cafe=CAFE_ID, menu=MENU_ID, page=page))
-        result = data["message"]["result"]
-        for a in result.get("articleList", []):
+        msg = data.get("message", {})
+        if str(msg.get("status")) != "200" or "result" not in msg:
+            raise RuntimeError(f"카페 목록 API 오류 (page={page}): {str(msg.get('error') or msg)[:200]}")
+        result = msg["result"]
+        articles = result.get("articleList") or []
+        new_ids = [a["articleId"] for a in articles if a["articleId"] not in seen_ids]
+        if not new_ids:                     # 빈 페이지 / 같은 페이지 반복 → 끝
+            break
+        seen_ids.update(new_ids)
+        for a in articles:
             m = ROUND_IN_SUBJECT.search(a.get("subject", ""))
-            if not m or m.group(1) in seen:
+            if not m or m.group(1) in seen_rounds:
                 continue
-            seen.add(m.group(1))
+            seen_rounds.add(m.group(1))
             rows.append([str(a["articleId"]), m.group(1)])
         if not result.get("hasNext"):
             break
         page += 1
         time.sleep(random.uniform(0.5, 1.2))
+    else:
+        print(f"[목록] 페이지 상한({MAX_LIST_PAGES}) 도달 — 여기까지만 사용")
     print(f"[목록] 회차 글 {len(rows)}개 ({page}페이지)")
     return np.array(rows, dtype=str).reshape(-1, 2)
 
@@ -735,14 +751,17 @@ def open_article(driver, article_id: str, timeout: float = 15):
         driver.get(tmpl.format(cafe=CAFE_ID, menu=MENU_ID, aid=article_id))
         deadline = time.time() + timeout
         while time.time() < deadline:
-            driver.switch_to.default_content()
-            frames = driver.find_elements(By.ID, "cafe_main")
-            if frames:
-                driver.switch_to.frame(frames[0])
-            for cls in CONTAINER_CLASSES:
-                found = driver.find_elements(By.CLASS_NAME, cls)
-                if found and found[0].text.strip():
-                    return found[0]
+            try:
+                driver.switch_to.default_content()
+                frames = driver.find_elements(By.ID, "cafe_main")
+                if frames:
+                    driver.switch_to.frame(frames[0])
+                for cls in CONTAINER_CLASSES:
+                    found = driver.find_elements(By.CLASS_NAME, cls)
+                    if found and found[0].text.strip():
+                        return found[0]
+            except WebDriverException:      # 렌더링 중 stale element / frame 전환 실패 → 다시 시도
+                pass
             time.sleep(0.5)
     raise TimeoutException(f"게시글 {article_id} 본문을 찾지 못함")
 
@@ -805,30 +824,42 @@ def crawl_cafe(driver, history):
         # 리허설 번호 파싱
         gap_r = name_winning - name_rehearsal
         if gap_r == 2:
-            numbers_rehearsal = np.array(content2[name_rehearsal + 1].split())
+            numbers_rehearsal = content2[name_rehearsal + 1].split()
         elif gap_r == 8:
-            numbers_rehearsal = content3[name_rehearsal + 1: name_rehearsal + 8]
+            numbers_rehearsal = list(content3[name_rehearsal + 1: name_rehearsal + 8])
         else:
-            print(f"리허설 파싱 오류 (gap={gap_r})")
-            continue
+            numbers_rehearsal = None
 
         # 당첨 번호 파싱
         gap_w = name_nextwin - name_winning
         if gap_w == 2:
-            numbers_winning = np.array(content2[name_winning + 1].split())
+            numbers_winning = content2[name_winning + 1].split()
         elif gap_w in (3, 4):
-            numbers_winning = np.array(
-                [n for c in content2[name_winning + 1: name_nextwin] for n in c.split() if n]
-            )
+            numbers_winning = [n for c in content2[name_winning + 1: name_nextwin] for n in c.split() if n]
         elif gap_w == 8:
-            numbers_winning = content3[name_winning + 1: name_winning + 8]
+            numbers_winning = list(content3[name_winning + 1: name_winning + 8])
         else:
-            print(f"당첨번호 파싱 오류 (gap={gap_w})")
+            numbers_winning = None
+
+        # 숫자 토큰만 남기고(예: "+" 구분자 제거) 본번호 6 + 보너스 1 = 7개인지 확인 — 폭이 다른 행이
+        # 섞이면 main() 의 np.array/savetxt 가 실패해 그 실행의 수집분 전체를 잃는다
+        def _clean(nums):
+            return None if nums is None else [n for n in nums if n.isdigit() and 1 <= int(n) <= 45]
+        numbers_rehearsal, numbers_winning = _clean(numbers_rehearsal), _clean(numbers_winning)
+        if not numbers_rehearsal or not numbers_winning or len(numbers_rehearsal) != 7 or len(numbers_winning) != 7:
+            print(f"[{tap}회차] 번호 파싱 오류 (gap 리허설={gap_r}, 당첨={gap_w}, "
+                  f"리허설={numbers_rehearsal}, 당첨={numbers_winning}) → 건너뜀")
+            failed.append(int(tap))
             continue
+        numbers_rehearsal, numbers_winning = np.array(numbers_rehearsal), np.array(numbers_winning)
 
         draw_date_str = round_to_date(int(tap))
         blank_details = np.array([""] * len(DETAIL_COLUMNS))
         official_details = _fetch_official_details(int(tap))
+        old_rows = history[history_numbers == int(tap)]
+        if not any(str(v) for v in official_details) and len(old_rows):
+            # 공홈 조회 실패 시 기존(본게임) 행의 등수별 상세를 유지 — 재수집이 상세를 지우지 않도록
+            official_details = old_rows[-1][10:]
 
         res_rehearsal = np.concatenate(
             [np.array([ballset, tap, draw_date_str]), numbers_rehearsal, blank_details]

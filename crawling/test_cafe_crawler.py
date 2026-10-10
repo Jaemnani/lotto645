@@ -72,7 +72,9 @@ def art_url(i, aid):
 
 
 def api(articles, has_next):
-    return {"body": json.dumps({"message": {"result": {"articleList": articles, "hasNext": has_next}}})}
+    # 실제 응답 형식: {"message": {"status": "200", "error": {...}, "result": {...}}}
+    return {"body": json.dumps({"message": {"status": "200", "error": {"code": "", "msg": ""},
+                                            "result": {"articleList": articles, "hasNext": has_next}}})}
 
 
 def article_text(bs, reh, win):
@@ -80,7 +82,7 @@ def article_text(bs, reh, win):
         "동행복권 로또6/45", "1. 볼세트", str(bs),
         "2. 모의추첨번호(리허설)", " ".join(map(str, reh)),
         "3. 당첨번호(추첨순)", " ".join(map(str, win)),
-        "4. 당첨번호(오름차순)", " ".join(map(str, sorted(win[:6]))),
+        "4. 당첨번호(오름차순)", " ".join(map(str, sorted(int(x) for x in win if str(x).isdigit())[:6])),
     ])
 
 
@@ -173,3 +175,74 @@ def test_real_csv_roundtrip_is_lossless():
              for i in range((len(arts) + 49) // 50)}
     out = np.array(c.crawl_cafe(FakeDriver(pages), raw))
     assert np.array_equal(out, raw)
+
+
+# ── 교차 검토에서 나온 경계 사례 ────────────────────────────────────────────────
+
+def test_list_articles_stops_on_empty_or_repeated_pages():
+    a = [{"articleId": 1, "subject": "동행복권 로또6/45 제900회"}]
+    d = FakeDriver({list_url(1): api(a, True), list_url(2): api([], True)})
+    assert c.list_articles(d).tolist() == [["1", "900"]]          # hasNext 가 true 여도 빈 페이지에서 멈춤
+
+    d = FakeDriver({list_url(i): api(a, True) for i in range(1, 5)})
+    assert c.list_articles(d).tolist() == [["1", "900"]]          # 같은 글 반복 → 멈춤
+    assert len(d.visited) == 2
+
+
+def test_list_articles_raises_clear_error_on_api_error_or_login_page():
+    d = FakeDriver({list_url(1): {"body": json.dumps({"message": {"status": "500", "error": {"msg": "x"}}})}})
+    with pytest.raises(RuntimeError, match="목록 API 오류"):
+        c.list_articles(d)
+    d = FakeDriver({list_url(1): {"body": "<html>로그인</html>"}})
+    with pytest.raises(RuntimeError, match="JSON 이 아닌 응답"):
+        c.list_articles(d)
+
+
+def test_open_article_retries_transient_webdriver_errors():
+    class Flaky(FakeDriver):
+        calls = 0
+
+        def find_elements(self, by, value):
+            Flaky.calls += 1
+            if Flaky.calls <= 2:
+                raise c.WebDriverException("stale element")
+            return super().find_elements(by, value)
+
+    d = Flaky({art_url(0, "7"): {"container": "본문"}})
+    assert c.open_article(d, "7", timeout=2).text == "본문"
+
+
+def _row(bs, rnd, nums, details=None):
+    width = 10 + len(c.DETAIL_COLUMNS)
+    d = details if details is not None else [""] * (width - 10)
+    return np.array([bs, str(rnd), c.round_to_date(rnd), *map(str, nums)] + list(d))
+
+
+def test_single_row_round_on_cafe_is_recrawled_and_keeps_details(monkeypatch):
+    det = [str(i) for i in range(len(c.DETAIL_COLUMNS))]
+    history = np.array([_row("", 900, [1, 2, 3, 4, 5, 6, 7], det)])     # 공홈 본게임만 있던 회차
+    monkeypatch.setattr(c, "_fetch_official_details", lambda r: np.array([""] * len(c.DETAIL_COLUMNS)))
+    d = FakeDriver({
+        list_url(1): api([{"articleId": 5, "subject": "동행복권 로또6/45 제900회"}], False),
+        art_url(0, "5"): {"container": article_text(2, [9, 10, 11, 12, 13, 14, 15], [1, 2, 3, 4, 5, 6, 7])},
+    })
+    out = c.crawl_cafe(d, history)
+    assert [r[1] for r in out] == ["900", "900"]
+    assert list(out[0][3:10]) == ["9", "10", "11", "12", "13", "14", "15"]   # 리허설 먼저
+    assert list(out[1][10:]) == det                                          # 공홈 실패해도 상세 유지
+
+
+def test_number_lines_with_separators_and_bad_counts():
+    history = np.empty((0, 10 + len(c.DETAIL_COLUMNS)), dtype=str)
+    d = FakeDriver({
+        list_url(1): api([
+            {"articleId": 2, "subject": "동행복권 로또6/45 제902회"},
+            {"articleId": 1, "subject": "동행복권 로또6/45 제901회"},
+        ], False),
+        art_url(0, "1"): {"container": article_text(1, [1, 2, 3, 4, 5, 6, 7], ["2", 10, 18, 26, 34, 42, "+", 44])},
+        art_url(0, "2"): {"container": article_text(1, [1, 2, 3, 4, 5, 6], [2, 10, 18, 26, 34, 42, 44])},  # 리허설 6개뿐
+    })
+    out = c.crawl_cafe(d, history)
+    assert [r[1] for r in out] == ["901", "901"]                 # 902 는 개수 오류로 건너뜀
+    assert list(out[1][3:10]) == ["2", "10", "18", "26", "34", "42", "44"]   # "+" 제거
+    np.array(out)                                                 # 폭이 같아 배열로 묶여야 함 (main() 저장 경로)
