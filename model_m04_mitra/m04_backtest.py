@@ -19,6 +19,7 @@ m04 백테스트 (rolling-origin)
   python m04_backtest.py --backend uniform m03 logreg
   python m04_backtest.py --backend uniform m03 mitra --n-rounds 100
   python m04_backtest.py --backend mitra --context same_set --use-rehearsal
+  python m04_backtest.py --backend uniform m03 m03r mitra --use-rehearsal --alpha 30
 """
 
 import argparse
@@ -42,13 +43,13 @@ METRICS = {"logloss": -1, "brier": -1, "top15_hits": +1, "top6_hits": +1}   # +1
 def score(p: np.ndarray, y: np.ndarray, rng: np.random.Generator) -> dict:
     ll = -(y * np.log(p) + (1 - y) * np.log(1 - p)).mean()
     br = ((p - y) ** 2).mean()
-    order = np.lexsort((rng.random(len(p)), -p))   # 동점은 무작위 (uniform 이 번호 순으로 뽑히지 않게)
-    return {
-        "logloss": float(ll),
-        "brier": float(br),
-        "top15_hits": int(y[order[:15]].sum()),
-        "top6_hits": int(y[order[:6]].sum()),
-    }
+    if np.ptp(p) < 1e-12:
+        # 모든 번호 확률이 같으면 상위 k 는 무작위 → 추첨 운에 따라 기준선이 흔들리지 않게 정확한 기대값 사용
+        top15, top6 = 15 * 6 / 45, 6 * 6 / 45
+    else:
+        order = np.lexsort((rng.random(len(p)), -p))   # 일부 동점만 무작위로
+        top15, top6 = int(y[order[:15]].sum()), int(y[order[:6]].sum())
+    return {"logloss": float(ll), "brier": float(br), "top15_hits": float(top15), "top6_hits": float(top6)}
 
 
 def bootstrap_ci(diff: np.ndarray, rng: np.random.Generator, n: int = 10000) -> tuple[float, float]:
@@ -59,7 +60,7 @@ def bootstrap_ci(diff: np.ndarray, rng: np.random.Generator, n: int = 10000) -> 
 
 def run(args) -> dict:
     hist = m04_data.load(args.source)
-    ft = build(hist, use_rehearsal=args.use_rehearsal)
+    ft = build(hist, use_rehearsal=args.use_rehearsal, alpha=args.alpha)
     evaluable = [k for k in range(len(hist)) if ft.per_round[k] is not None]
     if args.final:
         targets = evaluable[-args.holdout:]
@@ -143,7 +144,10 @@ def main():
     ap.add_argument("--final", action="store_true", help="holdout 구간 평가 (설정 확정 후 1회만)")
     ap.add_argument("--context", default="recent", choices=["recent", "same_set"])
     ap.add_argument("--context-rounds", type=int, default=110, help="컨텍스트 회차 수 (×45행, Mitra-v2 한도 5,120행)")
-    ap.add_argument("--use-rehearsal", action="store_true", help="이전 회차 리허설 기반 feature 추가")
+    ap.add_argument("--use-rehearsal", action="store_true",
+                    help="직전 회차까지의 리허설 기반 feature 추가 (r_post, sr_post, agree)")
+    ap.add_argument("--alpha", type=float, default=1.0,
+                    help="r_post/sr_post 평활 강도 (클수록 균등분포 쪽으로 강하게 당김). m04_tune.py 로 결정")
     ap.add_argument("--fine-tune", action="store_true", help="Mitra fine-tune (GPU 권장)")
     ap.add_argument("--n-estimators", type=int, default=1)
     ap.add_argument("--device", default="auto")

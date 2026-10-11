@@ -8,7 +8,11 @@ m04 feature 생성 (point-in-time)
 (test_m04.py 의 누수 테스트가 이를 검증)
 
 가설 → 컬럼
-  H1 공세트 편향 (m03 가설) : ball_set, s_n, s_post_m03, s_cnt_10, s_gap  (+ 옵션 r_post)
+  H1 공세트 편향 (m03 가설) : ball_set, s_n, s_post_m03, s_cnt_10, s_gap
+     + use_rehearsal (v2)   : r_n, r_post, sr_post, agree
+       · 리허설은 본게임과 같은 날 같은 공으로 뽑으므로 공 편향 추정 표본이 두 배가 된다
+       · 같은 회차 리허설은 구매 마감 뒤에 알 수 있으므로 쓰지 않는다 (직전 회차까지만)
+       · agree: 본게임과 리허설에서 **같은 방향**으로 치우친 번호만 살리는 재현성 칼럼
   H2 최근 흐름(hot)          : g_cnt_10 / 30 / 100, prev_hit, prev_bonus
   H3 오래 안 나옴(cold)      : g_gap, s_gap
   H4 번호 자체 성질(대조군)  : number, odd, zone, last_digit
@@ -28,7 +32,7 @@ BASE_FEATURES = [
     "g_rate", "g_cnt_10", "g_cnt_30", "g_cnt_100", "g_gap", "prev_hit", "prev_bonus",
     "ball_set", "s_n", "s_post_m03", "s_cnt_10", "s_gap",
 ]
-REHEARSAL_FEATURES = ["r_n", "r_post"]
+REHEARSAL_FEATURES = ["r_n", "r_post", "sr_post", "agree"]
 
 
 def feature_names(use_rehearsal: bool = False) -> list[str]:
@@ -42,6 +46,20 @@ _STATIC = np.stack([
     np.minimum((_NUM - 1) // 15, 2),
     _NUM % 10,
 ], axis=1).astype(np.float32)
+
+
+def _agree(cnt_a, n_a, cnt_b, n_b) -> np.ndarray:
+    """
+    두 독립 표본(본게임 / 리허설)에서 번호별 출현 편차(z)가 같은 방향이면 그 크기(기하평균),
+    반대 방향이면 0. 한쪽에서만 튄 번호(우연)는 지우고, 양쪽에서 재현된 편향만 남긴다.
+    """
+    p = 6 / NUM_BALLS
+    if n_a == 0 or n_b == 0:
+        return np.zeros(NUM_BALLS)
+    za = (cnt_a - n_a * p) / np.sqrt(n_a * p * (1 - p))
+    zb = (cnt_b - n_b * p) / np.sqrt(n_b * p * (1 - p))
+    same = np.sign(za) == np.sign(zb)
+    return np.where(same, np.sign(za) * np.sqrt(np.abs(za * zb)), 0.0)
 
 
 @dataclass
@@ -59,6 +77,7 @@ class _State:
     s_last: np.ndarray = field(default_factory=lambda: np.full((NUM_SETS + 1, NUM_BALLS), -1))
     r_n: np.ndarray = field(default_factory=lambda: np.zeros(NUM_SETS + 1, dtype=int))
     r_cnt: np.ndarray = field(default_factory=lambda: np.zeros((NUM_SETS + 1, NUM_BALLS)))
+    alpha: float = ALPHA        # r_post / sr_post 평활 강도 (s_post_m03 은 m03 와 같게 항상 1.0)
 
     def _window(self, hist: list, k: int) -> np.ndarray:
         if not hist:
@@ -89,8 +108,14 @@ class _State:
             ], axis=1),
         ]
         if use_rehearsal:
-            r_post = (self.r_cnt[b] + ALPHA) / (6 * self.r_n[b] + ALPHA * NUM_BALLS)
-            cols.append(np.stack([np.full(NUM_BALLS, self.r_n[b]), r_post], axis=1))
+            a = self.alpha
+            r_n = self.r_n[b]
+            r_post = (self.r_cnt[b] + a) / (6 * r_n + a * NUM_BALLS)
+            sr_post = (self.s_cnt[b] + self.r_cnt[b] + a) / (6 * (n_b + r_n) + a * NUM_BALLS)
+            cols.append(np.stack([
+                np.full(NUM_BALLS, r_n), r_post, sr_post,
+                _agree(self.s_cnt[b], n_b, self.r_cnt[b], r_n),
+            ], axis=1))
         return np.concatenate(cols, axis=1).astype(np.float32)
 
     def update(self, hits: np.ndarray, bonus: int, b: int, reh: np.ndarray | None):
@@ -127,8 +152,8 @@ class FeatureTable:
     next_query: np.ndarray
 
 
-def build(hist: History, use_rehearsal: bool = False) -> FeatureTable:
-    st = _State()
+def build(hist: History, use_rehearsal: bool = False, alpha: float = ALPHA) -> FeatureTable:
+    st = _State(alpha=alpha)
     per_round = []
     for k in range(len(hist)):
         b = int(hist.ball_set[k])
