@@ -6,6 +6,8 @@ m04 인기도 모델 — "남들이 많이 고르는 번호" 추정
 
 추정 방법
   1. 회차별 5등(3개 일치) 당첨 게임 수 / 기대값(판매 게임 수 × 5등 확률) 의 로그 = 그 회차 당첨번호의 인기
+     · 판매 게임 수 ≈ 총 당첨금(데이터의 total_sales 컬럼) ÷ 0.5 ÷ 1,000원 (법정 환급률 약 50%)
+       — 상수 배율은 중심화·절편에 흡수되므로 결과(β, γ)에는 영향 없음
      · 5등은 회차당 수백만 게임이라 잡음이 거의 없다 (1등 12명 남짓과 대조)
   2. 그 값을 번호 45개 indicator 로 ridge 회귀 → 번호별 인기 β
   3. 교차적합(자기 회차를 안 본) 인기점수로 1등 당첨자 수를 Poisson 회귀 → γ
@@ -43,6 +45,7 @@ GRADE_PROB = {
     5: comb(6, 3) * comb(39, 3) / N_COMBOS,
 }
 TICKET_PRICE = 1000
+PAYOUT_RATIO = 0.5      # 총 당첨금 / 판매액 (관측: 등수별 관측/기대 당첨 비가 전 등수 ≈ 1.0 이 되는 값)
 
 
 @dataclass
@@ -64,9 +67,14 @@ class PopularityModel:
         return np.exp(self.gamma * (self.score(combos) - self.ref))
 
 
+def _games(hist) -> np.ndarray:
+    """회차별 판매 게임 수 추정"""
+    return hist.prize_pool / PAYOUT_RATIO / TICKET_PRICE
+
+
 def _excess(hist, grade):
     w = hist.winners[:, grade - 1]
-    games = hist.sales / TICKET_PRICE
+    games = _games(hist)
     ok = np.isfinite(w) & np.isfinite(games) & (games > 0)
     y = np.log((w[ok] + 0.5) / (games[ok] * GRADE_PROB[grade]))
     return ok, y - y.mean()
@@ -83,12 +91,15 @@ def fit(hist, grade: int = 5, ridge: float = 30.0, folds: int = 5, seed: int = 0
 
     # 교차적합 인기점수 — 자기 회차의 당첨 정보를 보지 않은 점수로 1등 효과를 잰다
     sc = np.zeros(len(y))
+    coefs = []
     for tr, te in KFold(folds, shuffle=True, random_state=seed).split(X):
-        sc[te] = Ridge(alpha=ridge).fit(X[tr], y[tr]).predict(X[te])
+        m = Ridge(alpha=ridge).fit(X[tr], y[tr])
+        sc[te] = m.predict(X[te])
+        coefs.append(m.coef_)
 
     # 1등 Poisson: log E[w1] = log(games/N) + a + γ·sc   (뉴턴법)
     w1 = hist.winners[ok, 0]
-    off = np.log(hist.sales[ok] / TICKET_PRICE * GRADE_PROB[1])
+    off = np.log(_games(hist)[ok] * GRADE_PROB[1])
     A = np.c_[np.ones(len(sc)), sc - sc.mean()]
     b = np.zeros(2)
     for _ in range(100):
@@ -101,8 +112,9 @@ def fit(hist, grade: int = 5, ridge: float = 30.0, folds: int = 5, seed: int = 0
     phi = max(1.0, float(((w1 - mu) ** 2 / mu).sum() / (len(w1) - 2)))      # 과대산포
     se = float(np.sqrt(np.linalg.inv(A.T @ (A * mu[:, None]))[1, 1] * phi))
 
-    full = Ridge(alpha=ridge).fit(X, y)
-    beta = full.coef_
+    # γ 는 폴드 모델(데이터 4/5 로 적합, 더 강하게 축소된) 점수로 추정했으므로, 새 조합도 같은 축소 수준인
+    # 폴드 계수 평균으로 점수화해야 γ 의 척도가 맞는다 (전체 적합 계수를 쓰면 효과가 ~10% 과장됨)
+    beta = np.mean(coefs, axis=0)
     ref = float((X @ beta).mean())
     return PopularityModel(beta=beta, ref=ref, gamma=float(b[1]), gamma_se=se,
                            n_rounds=int(ok.sum()), grade=grade)

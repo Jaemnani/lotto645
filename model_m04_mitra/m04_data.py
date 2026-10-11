@@ -36,7 +36,8 @@ class History:
     reh_hits: np.ndarray   # (R, 45) bool — 같은 회차 리허설 본번호 (없으면 전부 False)
     has_reh:  np.ndarray   # (R,) bool
     winners:  np.ndarray   # (R, 5) float — 1~5등 당첨 게임 수 (없으면 NaN). 인기도 추정용
-    sales:    np.ndarray   # (R,) float — 총 판매금액(원) (없으면 NaN)
+    prize_pool: np.ndarray  # (R,) float — 등위별 총 당첨금 합(원). CSV/DB 컬럼명은 total_sales 지만 실제로는
+                            # total_prize_1~5 의 합 = 판매액의 약 50% (없으면 NaN)
 
     def __len__(self) -> int:
         return len(self.rounds)
@@ -87,7 +88,7 @@ def from_frame(df: pd.DataFrame) -> History:
         reh_hits=reh_hits,
         has_reh=has_reh,
         winners=num(WINNER_COLS),
-        sales=num(["total_sales"])[:, 0],
+        prize_pool=num(["total_sales"])[:, 0],
     )
 
 

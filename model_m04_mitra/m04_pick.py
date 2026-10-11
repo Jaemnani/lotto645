@@ -3,8 +3,13 @@ m04 티켓 선택 — 확률(m04) × 인기 회피
 ======================================
 목표: 1등 **기대 가치**가 가장 큰 조합 N장.
 
-  log 기대가치(c) = Σ_i log(p_i / (6/45))        ← 모델이 본 당첨 확률 (균등 대비 배수)
+  log 기대가치(c) = log P(c) / P_균등              ← 모델이 본 이 조합의 당첨 확률 (균등 대비 배수)
                   − log 공동당첨배수(c)            ← 남들이 덜 고를수록 덜 나눔 (m04_popularity)
+
+  P(c) 는 번호별 확률 6개를 단순히 곱하지 않는다 (공 6개는 서로 달라야 하므로 독립이 아님).
+  번호별 포함확률 p_i(합 6)를 정확히 재현하는 **조건부 포아송(고정 크기 6) 분포**
+      P(S) = Π_{i∈S} w_i / e_6(w)      (e_6: 6차 기본대칭다항식)
+  의 w 를 반복 보정으로 구해서 조합 확률을 계산한다.
 
 두 항이 같은 단위(로그 배수)라 임의 가중치가 없다. 모델 확률이 거의 균등하면 인기 회피가 주도하고,
 모델에 신호가 있으면 그만큼 반영된다. `--weight` 로 인기 항 비중만 조절할 수 있다(기본 1).
@@ -14,7 +19,8 @@ m04 티켓 선택 — 확률(m04) × 인기 회피
 
 사용:
   python m04_pick.py                                   # prediction.json(m04_predict 결과) 사용
-  python m04_pick.py --backend m03r --use-rehearsal --alpha 100   # 그 자리에서 확률 계산
+  python m04_pick.py --backend uniform                  # 확률 균등 + 인기 회피 (현재 권장)
+  python m04_pick.py --backend mitra --use-rehearsal    # 그 자리에서 Mitra 확률 계산
   python m04_pick.py --n 5 --max-overlap 2 --ball-set mix
 """
 
@@ -22,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+from math import comb
 
 import numpy as np
 
@@ -50,6 +57,43 @@ def mixed_rates(probs: dict, hist, ball_set: str) -> np.ndarray:
     return table[int(ball_set) - 1]
 
 
+def _esp(w: np.ndarray, k: int = 6) -> np.ndarray:
+    """기본대칭다항식 e_0..e_k(w)"""
+    e = np.zeros(k + 1)
+    e[0] = 1.0
+    for x in w:
+        e[1:] = e[1:] + x * e[:-1]
+    return e
+
+
+def _inclusion(w: np.ndarray, k: int = 6) -> np.ndarray:
+    """조건부 포아송 분포에서 번호별 포함확률 π_i = w_i · e_{k-1}(w_{-i}) / e_k(w)"""
+    e = _esp(w, k)
+    f = np.ones_like(w)                      # e_0(w_{-i})
+    for j in range(1, k):
+        f = e[j] - w * f                     # e_j(w_{-i}) = e_j(w) − w_i e_{j-1}(w_{-i})
+    return w * f / e[k]
+
+
+def conditional_poisson_weights(rates: np.ndarray, tol: float = 1e-12, max_iter: int = 2000) -> np.ndarray:
+    """포함확률이 rates(합 6)가 되는 w 를 반복 보정으로 구한다."""
+    target = np.asarray(rates, dtype=float)
+    w = target / (1 - target)
+    for _ in range(max_iter):
+        pi = _inclusion(w)
+        if np.abs(pi - target).max() < tol:
+            break
+        w = w * target / pi
+        w = w / w.mean()
+    return w
+
+
+def combo_log_ratio(combos: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """log P(조합) − log P_균등(조합) — 조건부 포아송 분포 기준"""
+    log_c = float(np.log(float(comb(NUM_BALLS, 6))))
+    return np.log(w)[np.asarray(combos) - 1].sum(axis=1) - np.log(_esp(w)[6]) + log_c
+
+
 def sample_combos(n: int, rng) -> np.ndarray:
     """서로 다른 6개 번호 조합 n개 (정렬, 1-based, 중복 제거)"""
     c = np.sort(np.argsort(rng.random((n, NUM_BALLS)), axis=1)[:, :6] + 1, axis=1)
@@ -65,8 +109,8 @@ def pick(rates: np.ndarray, pm, hist, n: int = 5, max_overlap: int = 2, weight: 
     keep = np.array([tuple(c) not in past for c in cands])
     cands = cands[keep]
 
-    log_p = np.log(np.clip(rates, 1e-6, None) / BASE_RATE)
-    model_term = log_p[cands - 1].sum(axis=1)
+    w = conditional_poisson_weights(np.clip(rates, 1e-6, 1 - 1e-6))
+    model_term = combo_log_ratio(cands, w)
     share = pm.jackpot_share(cands)
     objective = model_term - weight * np.log(share)
 
@@ -77,12 +121,14 @@ def pick(rates: np.ndarray, pm, hist, n: int = 5, max_overlap: int = 2, weight: 
             chosen.append({
                 "numbers": cands[i].tolist(),
                 "ev_multiplier": float(np.exp(objective[i])),        # 1등 기대가치, 평균 조합 대비
-                "prob_multiplier": float(np.exp(model_term[i])),     # 모델이 본 당첨확률, 균등 대비
+                "prob_multiplier": float(np.exp(model_term[i])),     # 모델이 본 이 조합의 당첨확률, 균등 대비
                 "co_winner_multiplier": float(share[i]),             # 공동당첨자 수, 평균 조합 대비
                 "popularity_percentile": float((share < share[i]).mean() * 100),
             })
             if len(chosen) == n:
                 break
+    if len(chosen) < n:
+        print(f"[경고] 겹침 ≤{max_overlap} 조건으로 {n}장 중 {len(chosen)}장만 고름 — --max-overlap 을 늘리거나 --n 을 줄이세요")
     return chosen
 
 
@@ -97,6 +143,11 @@ def load_probs(args, hist) -> tuple[dict, dict]:
             raise SystemExit(f"{path} 없음 — 먼저 m04_predict.py 를 돌리거나 --backend 를 지정하세요")
         with open(path, encoding="utf-8") as f:
             pred = json.load(f)
+        expected = int(hist.rounds[-1]) + 1
+        if pred.get("target_round") != expected and not args.allow_stale:
+            raise SystemExit(
+                f"{path} 는 {pred.get('target_round')}회용 (데이터 ~{pred.get('trained_through_round')}회) 인데 "
+                f"현재 데이터의 다음 회차는 {expected}회입니다 — m04_predict.py 를 다시 돌리거나 --allow-stale")
     return pred["probs"], {k: pred.get(k) for k in ("backend", "target_round", "trained_through_round", "config")}
 
 
@@ -105,8 +156,9 @@ def main():
     ap.add_argument("--source", default="csv", choices=["csv", "supabase"])
     ap.add_argument("--prediction", default=None, help="m04_predict.py 결과 JSON (기본 prediction.json)")
     ap.add_argument("--backend", default=None, help="지정하면 prediction.json 대신 그 자리에서 확률 계산")
+    ap.add_argument("--allow-stale", action="store_true", help="prediction.json 회차가 데이터와 달라도 사용")
     ap.add_argument("--use-rehearsal", action="store_true")
-    ap.add_argument("--alpha", type=float, default=100.0)
+    ap.add_argument("--alpha", type=float, default=1000.0, help="m04_tune.py 결과 (현재 1000 ≈ 균등)")
     ap.add_argument("--context-rounds", type=int, default=110)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--ball-set", default="mix", help="mix(기본, 과거 빈도로 섞음) 또는 1~5")

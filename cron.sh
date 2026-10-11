@@ -22,7 +22,7 @@ cd "$ROOT"
 M04_PYTHON="${M04_PYTHON:-/Users/ohyeahdani_m1/workspace/venv_m04/bin/python}"
 if [ -x "$M04_PYTHON" ]; then
     echo "----- $(date '+%Y-%m-%d %H:%M:%S') m04 예측 시작 -----" >> "$LOG"
-    if ! "$M04_PYTHON" model_m04_mitra/m04_predict.py --source supabase --use-rehearsal --alpha 100 >> "$LOG" 2>&1; then
+    if ! "$M04_PYTHON" model_m04_mitra/m04_predict.py --source supabase >> "$LOG" 2>&1; then
         echo "[m04] 예측 실패 — 서버는 m03 로 폴백" >> "$LOG"
         discord_send "⚠️ m04 예측 실패 (서버는 m03 폴백) · 로그: $LOG"
     fi

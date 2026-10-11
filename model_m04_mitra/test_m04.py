@@ -244,3 +244,41 @@ def test_pick_weight_zero_follows_model(hist, pop):
     rates[np.array(fav) - 1] = 0.3                         # 모델이 1~6 을 강하게 선호
     t = pick(rates, pop, hist, n=1, weight=0.0, samples=200_000, seed=0)[0]
     assert len(set(t["numbers"]) & set(fav)) >= 5           # 인기 무시하면 모델 선호 그대로
+
+
+# ── 교차 검토 / Codex 지적 회귀 테스트 ──────────────────────────────────────────
+
+def test_conditional_poisson_reproduces_inclusion_and_is_neutral_when_uniform():
+    from m04_pick import _inclusion, combo_log_ratio, conditional_poisson_weights
+    rng = np.random.default_rng(3)
+    r = rng.uniform(0.08, 0.2, 45)
+    r = r / r.sum() * 6
+    w = conditional_poisson_weights(r)
+    np.testing.assert_allclose(_inclusion(w), r, atol=1e-10)
+    u = conditional_poisson_weights(np.full(45, 6 / 45))
+    np.testing.assert_allclose(combo_log_ratio(np.array([[1, 2, 3, 4, 5, 6], [40, 41, 42, 43, 44, 45]]), u), 0, atol=1e-9)
+
+
+def test_pick_warns_when_it_cannot_fill_n(hist, pop, capsys):
+    from m04_pick import pick
+    t = pick(np.full(45, 6 / 45), pop, hist, n=8, max_overlap=0, samples=50_000, seed=0)
+    assert len(t) < 8 and "경고" in capsys.readouterr().out
+
+
+def test_pick_rejects_stale_prediction(hist, tmp_path):
+    import argparse
+    import json
+    from m04_pick import load_probs
+    f = tmp_path / "prediction.json"
+    f.write_text(json.dumps({"target_round": int(hist.rounds[-1]), "probs": {}}))
+    args = argparse.Namespace(backend=None, prediction=str(f), allow_stale=False)
+    with pytest.raises(SystemExit):
+        load_probs(args, hist)
+
+
+def test_backtest_uniform_baseline_uses_exact_expectation():
+    from m04_backtest import score
+    y = np.zeros(45)
+    y[:6] = 1
+    s = score(np.full(45, 6 / 45), y, np.random.default_rng(0))
+    assert s["top15_hits"] == 2.0 and abs(s["top6_hits"] - 0.8) < 1e-12
