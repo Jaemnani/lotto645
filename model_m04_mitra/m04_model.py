@@ -6,6 +6,7 @@ m04 확률 백엔드
   mitra    : Amazon Mitra-v2 (autogluon/mitra-classifier-2). 기본은 ICL only(fine_tune=False).
   logreg   : 로지스틱 회귀 — 파이프라인/feature 검증용 기준선 (가중치 다운로드 불필요)
   m03      : feature 의 s_post_m03 를 그대로 사용 (= 운영 중인 m03 와 동일한 확률)
+  m03r     : 리허설 합산 + α 조정 공세트 posterior (sr_post) — 공 편향 가설의 개선판 기준선
   uniform  : 모든 번호 6/45 — "패턴 없음" 기준선
 
 한 회차 안에서 p 의 합은 6 이어야 하므로 normalize_round() 로 맞춘 뒤 쓴다.
@@ -37,6 +38,22 @@ class M03Backend:
 
     def __init__(self, use_rehearsal: bool = False, **_):
         self.col = feature_names(use_rehearsal).index("s_post_m03")
+
+    def fit(self, X, y):
+        return self
+
+    def predict(self, X):
+        return X[:, self.col] * 6
+
+
+class M03RBackend:
+    """m03 + 직전 회차까지의 리허설 합산 공세트 posterior (sr_post). --use-rehearsal 필요."""
+    name = "m03r"
+
+    def __init__(self, use_rehearsal: bool = False, **_):
+        if not use_rehearsal:
+            raise ValueError("m03r 백엔드는 --use-rehearsal 과 함께 써야 합니다")
+        self.col = feature_names(True).index("sr_post")
 
     def fit(self, X, y):
         return self
@@ -121,7 +138,7 @@ class MitraBackend:
         return self.model.predict_proba(X)[:, 1]
 
 
-BACKENDS = {b.name: b for b in (UniformBackend, M03Backend, LogRegBackend, MitraBackend)}
+BACKENDS = {b.name: b for b in (UniformBackend, M03Backend, M03RBackend, LogRegBackend, MitraBackend)}
 
 
 def make_backend(name: str, **kw):

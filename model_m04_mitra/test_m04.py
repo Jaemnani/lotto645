@@ -174,3 +174,111 @@ def test_load_supabase_pages_past_1000(monkeypatch):
     monkeypatch.setitem(sys.modules, "supabase", fake_supabase)
     h = m04_data.load_supabase()
     assert len(h) == 1250 and h.rounds[-1] == 733 + 1249
+
+
+# ── v2: 리허설 합산·α·재현성 칼럼 / 인기도 / 티켓 선택 ──────────────────────────────
+
+def test_v2_features_alpha_and_agree(hist):
+    from m04_features import build, feature_names
+    names = feature_names(True)
+    assert names[-4:] == ["r_n", "r_post", "sr_post", "agree"] and len(names) <= 50
+    a1 = build(hist, use_rehearsal=True, alpha=1.0).next_query
+    a100 = build(hist, use_rehearsal=True, alpha=100.0).next_query
+    sr = names.index("sr_post")
+    # α 가 클수록 균등(1/45) 쪽으로 당겨진다
+    assert np.abs(a100[:, :, sr] - 1 / 45).max() < np.abs(a1[:, :, sr] - 1 / 45).max()
+    np.testing.assert_allclose(a100[:, :, sr].sum(axis=1), 1.0, rtol=1e-5)
+    # s_post_m03 는 α 와 무관 (운영 m03 와 동등성 유지)
+    m = names.index("s_post_m03")
+    np.testing.assert_array_equal(a1[:, :, m], a100[:, :, m])
+    # agree: 한쪽 표본만 치우치면 0
+    from m04_features import _agree
+    z = _agree(np.array([20.0] + [0] * 44), 30, np.array([0.0] * 45), 30)
+    assert z[0] == 0
+
+
+def test_m03r_backend_requires_rehearsal(hist):
+    from m04_features import build
+    from m04_model import M03RBackend, make_backend
+    with pytest.raises(ValueError):
+        make_backend("m03r")
+    ft = build(hist, use_rehearsal=True, alpha=100.0)
+    p = M03RBackend(use_rehearsal=True).predict(ft.next_query[0])
+    assert abs(p.sum() - 6) < 1e-4
+
+
+@pytest.fixture(scope="module")
+def pop(hist):
+    from m04_popularity import fit
+    return fit(hist)
+
+
+def test_popularity_model_is_predictive(hist, pop):
+    from m04_popularity import holdout_check
+    assert holdout_check(hist) > 0.5                 # 학습 안 한 최근 100회 5등 초과당첨 예측
+    assert pop.gamma > 0 and pop.gamma / pop.gamma_se > 2
+    low = np.array([[29, 36, 41, 42, 43, 45]])
+    high = np.array([[3, 7, 9, 11, 12, 17]])
+    assert pop.jackpot_share(low)[0] < 1 < pop.jackpot_share(high)[0]
+
+
+def test_pick_constraints(hist, pop):
+    from m04_pick import pick
+    rates = np.full(45, 6 / 45)
+    tickets = pick(rates, pop, hist, n=5, max_overlap=2, samples=50_000, seed=1)
+    past = {tuple(np.flatnonzero(h) + 1) for h in hist.hits}
+    assert len(tickets) == 5
+    for i, t in enumerate(tickets):
+        nums = t["numbers"]
+        assert nums == sorted(nums) and len(set(nums)) == 6 and 1 <= nums[0] and nums[-1] <= 45
+        assert tuple(nums) not in past
+        assert t["co_winner_multiplier"] < 1                 # 균등 확률이면 인기 회피만으로 고름
+        for u in tickets[:i]:
+            assert len(set(nums) & set(u["numbers"])) <= 2
+
+
+def test_pick_weight_zero_follows_model(hist, pop):
+    from m04_pick import pick
+    rates = np.full(45, (6 - 6 * 0.3) / 39)
+    fav = [1, 2, 3, 4, 5, 6]
+    rates[np.array(fav) - 1] = 0.3                         # 모델이 1~6 을 강하게 선호
+    t = pick(rates, pop, hist, n=1, weight=0.0, samples=200_000, seed=0)[0]
+    assert len(set(t["numbers"]) & set(fav)) >= 5           # 인기 무시하면 모델 선호 그대로
+
+
+# ── 교차 검토 / Codex 지적 회귀 테스트 ──────────────────────────────────────────
+
+def test_conditional_poisson_reproduces_inclusion_and_is_neutral_when_uniform():
+    from m04_pick import _inclusion, combo_log_ratio, conditional_poisson_weights
+    rng = np.random.default_rng(3)
+    r = rng.uniform(0.08, 0.2, 45)
+    r = r / r.sum() * 6
+    w = conditional_poisson_weights(r)
+    np.testing.assert_allclose(_inclusion(w), r, atol=1e-10)
+    u = conditional_poisson_weights(np.full(45, 6 / 45))
+    np.testing.assert_allclose(combo_log_ratio(np.array([[1, 2, 3, 4, 5, 6], [40, 41, 42, 43, 44, 45]]), u), 0, atol=1e-9)
+
+
+def test_pick_warns_when_it_cannot_fill_n(hist, pop, capsys):
+    from m04_pick import pick
+    t = pick(np.full(45, 6 / 45), pop, hist, n=8, max_overlap=0, samples=50_000, seed=0)
+    assert len(t) < 8 and "경고" in capsys.readouterr().out
+
+
+def test_pick_rejects_stale_prediction(hist, tmp_path):
+    import argparse
+    import json
+    from m04_pick import load_probs
+    f = tmp_path / "prediction.json"
+    f.write_text(json.dumps({"target_round": int(hist.rounds[-1]), "probs": {}}))
+    args = argparse.Namespace(backend=None, prediction=str(f), allow_stale=False)
+    with pytest.raises(SystemExit):
+        load_probs(args, hist)
+
+
+def test_backtest_uniform_baseline_uses_exact_expectation():
+    from m04_backtest import score
+    y = np.zeros(45)
+    y[:6] = 1
+    s = score(np.full(45, 6 / 45), y, np.random.default_rng(0))
+    assert s["top15_hits"] == 2.0 and abs(s["top6_hits"] - 0.8) < 1e-12

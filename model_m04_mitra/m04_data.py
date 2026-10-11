@@ -23,6 +23,7 @@ CSV_PATH = os.path.join(ROOT, "data", "history_from_cafe.csv")
 NUM_BALLS = 45
 NUM_SETS  = 5
 MAIN_COLS = ["n1", "n2", "n3", "n4", "n5", "n6"]
+WINNER_COLS = ["winners_1", "winners_2", "winners_3", "winners_4", "winners_5"]
 
 
 @dataclass
@@ -34,6 +35,9 @@ class History:
     bonus:    np.ndarray   # (R,) int
     reh_hits: np.ndarray   # (R, 45) bool — 같은 회차 리허설 본번호 (없으면 전부 False)
     has_reh:  np.ndarray   # (R,) bool
+    winners:  np.ndarray   # (R, 5) float — 1~5등 당첨 게임 수 (없으면 NaN). 인기도 추정용
+    prize_pool: np.ndarray  # (R,) float — 등위별 총 당첨금 합(원). CSV/DB 컬럼명은 total_sales 지만 실제로는
+                            # total_prize_1~5 의 합 = 판매액의 약 50% (없으면 NaN)
 
     def __len__(self) -> int:
         return len(self.rounds)
@@ -53,7 +57,7 @@ def _to_hits(nums: pd.DataFrame) -> np.ndarray:
 
 def from_frame(df: pd.DataFrame) -> History:
     """
-    df 컬럼: round, is_winning, ball_set(NaN 가능), n1~n6, bonus
+    df 컬럼: round, is_winning, ball_set(NaN 가능), n1~n6, bonus, [winners_1~5, total_sales]
     """
     df = df.copy()
     df["ball_set"] = pd.to_numeric(df["ball_set"], errors="coerce").fillna(0).astype(int)
@@ -71,6 +75,11 @@ def from_frame(df: pd.DataFrame) -> History:
                 reh_hits[i] = reh_all[pos[r]]
                 has_reh[i]  = True
 
+    def num(cols):
+        if not set(cols) <= set(real.columns):
+            return np.full((len(real), len(cols)), np.nan)
+        return real[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+
     return History(
         rounds=rounds,
         ball_set=real["ball_set"].to_numpy(dtype=int),
@@ -78,12 +87,15 @@ def from_frame(df: pd.DataFrame) -> History:
         bonus=real["bonus"].to_numpy(dtype=int),
         reh_hits=reh_hits,
         has_reh=has_reh,
+        winners=num(WINNER_COLS),
+        prize_pool=num(["total_sales"])[:, 0],
     )
 
 
 def load_csv(path: str = CSV_PATH) -> History:
-    df = pd.read_csv(path, header=None, usecols=range(10),
-                     names=["ball_set", "round", "draw_date", *MAIN_COLS, "bonus"])
+    # 0~9: 기본, 10~14: winners_1~5, 20: total_sales (crawling 의 DETAIL_COLUMNS 순서)
+    df = pd.read_csv(path, header=None, usecols=[*range(15), 20],
+                     names=["ball_set", "round", "draw_date", *MAIN_COLS, "bonus", *WINNER_COLS, "total_sales"])
     # 회차당 1행 = 실제, 2행 = (리허설, 실제)  — scripts/backfill_csv_from_db.py 와 같은 규칙
     df["is_winning"] = (df.groupby("round")["round"].transform("size") == 1) | (df.groupby("round").cumcount() > 0)
     return from_frame(df)
@@ -99,7 +111,7 @@ def load_supabase() -> History:
         # postgrest range() 는 offset/limit 을 덮어쓰지 않고 누적하므로 페이지마다 쿼리를 새로 만든다
         return (
             sb.table("draw_results")
-            .select("round,is_winning,ball_set," + ",".join(MAIN_COLS) + ",bonus")
+            .select("round,is_winning,ball_set," + ",".join(MAIN_COLS + ["bonus"] + WINNER_COLS) + ",total_sales")
             .order("round")
             .order("is_winning")
             .range(start, end)

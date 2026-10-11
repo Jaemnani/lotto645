@@ -37,7 +37,7 @@ MODEL_KEY = "m04"
 
 def predict(source: str, backend: str, context_rounds: int, context_mode: str = "recent", **backend_kw) -> dict:
     hist = m04_data.load(source)
-    ft = build(hist, use_rehearsal=backend_kw.get("use_rehearsal", False))
+    ft = build(hist, use_rehearsal=backend_kw.get("use_rehearsal", False), alpha=backend_kw.get("alpha", 1.0))
     q = ft.next_query                                       # (5, 45, F)
 
     t0 = time.time()
@@ -104,6 +104,7 @@ def main():
     ap.add_argument("--context", default="recent", choices=["recent", "same_set"])
     ap.add_argument("--context-rounds", type=int, default=110)
     ap.add_argument("--use-rehearsal", action="store_true")
+    ap.add_argument("--alpha", type=float, default=1.0, help="r_post/sr_post 평활 강도 (m04_tune.py 결과)")
     ap.add_argument("--fine-tune", action="store_true")
     ap.add_argument("--n-estimators", type=int, default=1)
     ap.add_argument("--device", default="auto")
@@ -114,7 +115,7 @@ def main():
 
     pred = predict(
         args.source, args.backend, args.context_rounds, args.context,
-        use_rehearsal=args.use_rehearsal, fine_tune=args.fine_tune,
+        use_rehearsal=args.use_rehearsal, alpha=args.alpha, fine_tune=args.fine_tune,
         n_estimators=args.n_estimators, device=args.device, hf_model=args.hf_model,
     )
     with open(OUT_PATH, "w", encoding="utf-8") as f:
